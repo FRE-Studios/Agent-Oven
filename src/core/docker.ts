@@ -1,0 +1,407 @@
+/**
+ * Docker execution layer
+ * Handles container operations via Colima
+ */
+
+import { execa, type ExecaError } from 'execa';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type {
+  Config,
+  Job,
+  ColimaStatus,
+  SchedulerStatus,
+  RunningContainer,
+  JobLogEntry,
+  JobRunResult,
+  SystemStatus,
+} from './types.js';
+import {
+  getLogsDir,
+  getJobLogsDir,
+  getSchedulerLogPath,
+  getLaunchdPlistPath,
+} from './config.js';
+import { getJobStats } from './jobs.js';
+
+/**
+ * Check if Colima is running
+ */
+export async function getColimaStatus(): Promise<ColimaStatus> {
+  try {
+    const { stdout } = await execa('colima', ['status'], { reject: false });
+    const running = stdout.includes('Running') || stdout.includes('is running');
+
+    if (!running) {
+      return { running: false };
+    }
+
+    // Parse CPU/memory/disk from output
+    const cpuMatch = stdout.match(/CPU:\s*(\d+)/);
+    const memoryMatch = stdout.match(/Memory:\s*(\d+)/);
+    const diskMatch = stdout.match(/Disk:\s*(\d+)/);
+
+    return {
+      running: true,
+      cpu: cpuMatch ? parseInt(cpuMatch[1], 10) : undefined,
+      memory: memoryMatch ? parseInt(memoryMatch[1], 10) : undefined,
+      disk: diskMatch ? parseInt(diskMatch[1], 10) : undefined,
+    };
+  } catch {
+    return { running: false };
+  }
+}
+
+/**
+ * Start Colima VM
+ */
+export async function startColima(config: Config): Promise<void> {
+  const { cpu, memory, disk } = config.colima;
+  await execa('colima', [
+    'start',
+    '--cpu', cpu.toString(),
+    '--memory', memory.toString(),
+    '--disk', disk.toString(),
+  ]);
+}
+
+/**
+ * Stop Colima VM
+ */
+export async function stopColima(): Promise<void> {
+  await execa('colima', ['stop']);
+}
+
+/**
+ * Check if the scheduler daemon is loaded
+ */
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
+  try {
+    const { stdout } = await execa('launchctl', ['list'], { reject: false });
+    const loaded = stdout.includes('com.agent-oven.scheduler');
+
+    if (!loaded) {
+      return { loaded: false };
+    }
+
+    // Try to get last exit status
+    try {
+      const { stdout: detailOutput } = await execa(
+        'launchctl',
+        ['list', 'com.agent-oven.scheduler'],
+        { reject: false }
+      );
+      const exitMatch = detailOutput.match(/LastExitStatus\s*=\s*(\d+)/);
+      return {
+        loaded: true,
+        lastExitStatus: exitMatch ? parseInt(exitMatch[1], 10) : undefined,
+      };
+    } catch {
+      return { loaded: true };
+    }
+  } catch {
+    return { loaded: false };
+  }
+}
+
+/**
+ * Get list of running job containers
+ */
+export async function getRunningContainers(): Promise<RunningContainer[]> {
+  try {
+    const { stdout } = await execa('docker', [
+      'ps',
+      '--filter', 'name=oven-',
+      '--format', '{{.Names}}\t{{.Status}}\t{{.Image}}',
+    ], { reject: false });
+
+    if (!stdout.trim()) {
+      return [];
+    }
+
+    return stdout.trim().split('\n').map((line) => {
+      const [name, status, image] = line.split('\t');
+      return {
+        name,
+        status,
+        image,
+        jobId: name.startsWith('oven-') ? name.slice(5) : undefined,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get recent job executions from log files
+ */
+export function getRecentExecutions(config: Config, limit = 5): JobLogEntry[] {
+  const jobsLogsDir = path.join(getLogsDir(config), 'jobs');
+
+  if (!fs.existsSync(jobsLogsDir)) {
+    return [];
+  }
+
+  const entries: JobLogEntry[] = [];
+
+  try {
+    const jobDirs = fs.readdirSync(jobsLogsDir);
+
+    for (const jobId of jobDirs) {
+      const jobDir = path.join(jobsLogsDir, jobId);
+      const stat = fs.statSync(jobDir);
+
+      if (!stat.isDirectory()) continue;
+
+      const logFiles = fs.readdirSync(jobDir)
+        .filter((f) => f.endsWith('.log'))
+        .sort()
+        .reverse();
+
+      for (const logFile of logFiles) {
+        const logPath = path.join(jobDir, logFile);
+        const timestamp = logFile.replace('.log', '');
+
+        // Try to read exit code from log
+        let exitCode: number | 'running' = 'running';
+        try {
+          const content = fs.readFileSync(logPath, 'utf-8');
+          const exitMatch = content.match(/Exit Code:\s*(\d+)/);
+          if (exitMatch) {
+            exitCode = parseInt(exitMatch[1], 10);
+          }
+        } catch {
+          // Ignore read errors
+        }
+
+        entries.push({
+          jobId,
+          timestamp,
+          logFile: logPath,
+          exitCode,
+        });
+      }
+    }
+  } catch {
+    // Ignore errors reading log directory
+  }
+
+  // Sort by timestamp descending and limit
+  return entries
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+    .slice(0, limit);
+}
+
+/**
+ * Get complete system status
+ */
+export async function getSystemStatus(config: Config): Promise<SystemStatus> {
+  const [colima, scheduler, runningContainers] = await Promise.all([
+    getColimaStatus(),
+    getSchedulerStatus(),
+    getRunningContainers(),
+  ]);
+
+  const jobs = getJobStats(config);
+  const recentExecutions = getRecentExecutions(config);
+
+  return {
+    colima,
+    scheduler,
+    jobs,
+    runningContainers,
+    recentExecutions,
+  };
+}
+
+/**
+ * Run a job immediately
+ */
+export async function runJob(
+  config: Config,
+  job: Job,
+  options: { detach?: boolean } = {}
+): Promise<JobRunResult> {
+  // Ensure log directory exists
+  const jobLogDir = getJobLogsDir(config, job.id);
+  if (!fs.existsSync(jobLogDir)) {
+    fs.mkdirSync(jobLogDir, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T').join('-').slice(0, 17);
+  const logFile = path.join(jobLogDir, `${timestamp}.log`);
+
+  // Build docker command arguments
+  const args: string[] = ['run', '--rm', `--name=oven-${job.id}`];
+
+  // Add resource limits
+  args.push(`--cpus=${config.docker.defaultCpus}`);
+  args.push(`--memory=${config.docker.defaultMemory}`);
+
+  // Add volumes
+  if (job.volumes) {
+    for (const vol of job.volumes) {
+      args.push('-v', vol);
+    }
+  }
+
+  // Add environment variables
+  if (job.env) {
+    for (const [key, value] of Object.entries(job.env)) {
+      args.push('-e', `${key}=${value}`);
+    }
+  }
+
+  // Add image
+  args.push(job.image);
+
+  // Add command
+  if (Array.isArray(job.command)) {
+    args.push(...job.command);
+  } else {
+    args.push(job.command);
+  }
+
+  // Write log header
+  const logHeader = [
+    `=== Job: ${job.id} ===`,
+    `=== Started: ${new Date().toISOString()} ===`,
+    `=== Command: docker ${args.join(' ')} ===`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(logFile, logHeader);
+
+  if (options.detach) {
+    // Run in background
+    const dockerArgs = [...args];
+    dockerArgs.splice(1, 0, '-d'); // Add -d after 'run'
+
+    try {
+      await execa('docker', dockerArgs);
+      return {
+        success: true,
+        exitCode: 0,
+        logFile,
+        output: 'Job started in detached mode',
+      };
+    } catch (err) {
+      const error = err as ExecaError;
+      const errOutput = typeof error.stderr === 'string' ? error.stderr : error.message;
+      return {
+        success: false,
+        exitCode: error.exitCode ?? 1,
+        logFile,
+        output: errOutput,
+      };
+    }
+  }
+
+  // Run in foreground with timeout
+  try {
+    const result = await execa('docker', args, {
+      timeout: job.timeout ? job.timeout * 1000 : undefined,
+      reject: false,
+    });
+
+    // Append output to log
+    const stdout = typeof result.stdout === 'string' ? result.stdout : '';
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    const logContent = [
+      stdout,
+      stderr,
+      '',
+      `=== Finished: ${new Date().toISOString()} ===`,
+      `=== Exit Code: ${result.exitCode} ===`,
+    ].filter(Boolean).join('\n');
+    fs.appendFileSync(logFile, logContent);
+
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode ?? 0,
+      logFile,
+      output: stdout,
+    };
+  } catch (err) {
+    const error = err as ExecaError;
+    const errStdout = typeof error.stdout === 'string' ? error.stdout : '';
+    const errStderr = typeof error.stderr === 'string' ? error.stderr : '';
+    const logContent = [
+      errStdout,
+      errStderr,
+      '',
+      `=== Finished: ${new Date().toISOString()} ===`,
+      `=== Exit Code: ${error.exitCode ?? 1} ===`,
+      `=== Error: ${error.message} ===`,
+    ].filter(Boolean).join('\n');
+    fs.appendFileSync(logFile, logContent);
+
+    return {
+      success: false,
+      exitCode: error.exitCode ?? 1,
+      logFile,
+      output: errStderr || error.message,
+    };
+  }
+}
+
+/**
+ * Stop a running job
+ */
+export async function stopJob(jobId: string): Promise<void> {
+  await execa('docker', ['stop', `oven-${jobId}`], { reject: false });
+}
+
+/**
+ * Read a job's log file
+ */
+export function readJobLog(logFile: string): string {
+  if (!fs.existsSync(logFile)) {
+    return '';
+  }
+  return fs.readFileSync(logFile, 'utf-8');
+}
+
+/**
+ * Get list of log files for a job
+ */
+export function getJobLogFiles(config: Config, jobId: string): string[] {
+  const jobLogDir = getJobLogsDir(config, jobId);
+
+  if (!fs.existsSync(jobLogDir)) {
+    return [];
+  }
+
+  return fs.readdirSync(jobLogDir)
+    .filter((f) => f.endsWith('.log'))
+    .sort()
+    .reverse()
+    .map((f) => path.join(jobLogDir, f));
+}
+
+/**
+ * Read scheduler log
+ */
+export function readSchedulerLog(config: Config, lines = 50): string {
+  const logPath = getSchedulerLogPath(config);
+
+  if (!fs.existsSync(logPath)) {
+    return '';
+  }
+
+  const content = fs.readFileSync(logPath, 'utf-8');
+  const allLines = content.split('\n');
+  return allLines.slice(-lines).join('\n');
+}
+
+/**
+ * Check if Docker is available
+ */
+export async function isDockerAvailable(): Promise<boolean> {
+  try {
+    await execa('docker', ['info'], { reject: false });
+    return true;
+  } catch {
+    return false;
+  }
+}

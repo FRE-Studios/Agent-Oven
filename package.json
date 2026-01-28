@@ -1,0 +1,44 @@
+{
+  "name": "agent-oven",
+  "version": "0.1.0",
+  "description": "macOS-native job scheduler TUI for Docker containers",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "agent-oven": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/cli.tsx",
+    "dev": "tsx watch src/cli.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "scheduler",
+    "docker",
+    "tui",
+    "cli",
+    "macos",
+    "colima"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "execa": "^9.5.2",
+    "ink": "^5.1.0",
+    "ink-select-input": "^6.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@types/react": "^18.3.18",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
