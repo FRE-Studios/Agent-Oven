@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Agent Oven is a macOS-native job scheduler that runs Docker containers on a schedule using Colima as the container runtime. Jobs are defined in `jobs.json` and executed by a launchd daemon that runs every 60 seconds.
+Agent Oven is a macOS-native job scheduler that runs Docker containers on a schedule using Colima as the container runtime. It features an interactive terminal UI (TUI) built with React/Ink for job management, and a launchd daemon that executes scheduled jobs.
 
 **Status:** In Development
 
@@ -13,20 +13,59 @@ Agent Oven is a macOS-native job scheduler that runs Docker containers on a sche
 ## Architecture
 
 ```
+┌─────────────────────────────────────────────────────────┐
+│                  TUI (npm start)                        │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────────┐   │
+│  │Dashboard│ │Job List │ │Job Form │ │ Log Viewer  │   │
+│  └─────────┘ └─────────┘ └─────────┘ └─────────────┘   │
+└─────────────────────────────────────────────────────────┘
+                            │
+┌─────────────────────────────────────────────────────────┐
+│                   Core Library                           │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐  │
+│  │  jobs.ts │ │scheduler │ │docker.ts │ │ config.ts │  │
+│  └──────────┘ └──────────┘ └──────────┘ └───────────┘  │
+└─────────────────────────────────────────────────────────┘
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+        ┌─────────┐                 ┌───────────┐
+        │jobs.json│                 │  Docker   │
+        └─────────┘                 │ (Colima)  │
+                                    └───────────┘
+
 ┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
 │   launchd       │────▶│ scheduler.sh │────▶│   Docker    │
-│ (60s interval)  │     │ (reads jobs) │     │ (via Colima)│
+│ (60s interval)  │     │   (daemon)   │     │ (via Colima)│
 └─────────────────┘     └──────────────┘     └─────────────┘
-                              │
-                              ▼
-                        ┌──────────┐
-                        │jobs.json │
-                        └──────────┘
 ```
 
-- **scheduler.sh**: Main daemon that parses cron expressions, checks job schedules, and runs Docker containers
-- **jobs.json**: Job definitions with schedule (cron or one-time), image, command, volumes, env vars
-- **launchd plist**: `~/Library/LaunchAgents/com.agent-oven.scheduler.plist` - starts scheduler every 60 seconds
+## Project Structure
+
+```
+agent-oven/
+├── src/
+│   ├── core/                # Core library (no UI dependencies)
+│   │   ├── types.ts         # TypeScript interfaces
+│   │   ├── config.ts        # Configuration management
+│   │   ├── jobs.ts          # Job CRUD operations
+│   │   ├── docker.ts        # Docker/Colima execution
+│   │   └── scheduler.ts     # Cron parsing, schedule matching
+│   │
+│   ├── tui/                 # Ink TUI components
+│   │   ├── App.tsx          # Main app with navigation
+│   │   └── components/      # Dashboard, JobList, JobForm, etc.
+│   │
+│   └── cli.tsx              # Entry point
+│
+├── dist/                    # Compiled JavaScript
+├── images/                  # Dockerfiles for pre-built images
+├── scheduler.sh             # Daemon (called by launchd)
+├── setup.sh                 # Initial setup script
+├── jobs.json                # Job definitions
+├── package.json
+└── tsconfig.json
+```
 
 ## Commands
 
@@ -34,19 +73,42 @@ Agent Oven is a macOS-native job scheduler that runs Docker containers on a sche
 # Initial setup (installs Colima, Docker, builds images, creates launchd agent)
 ./setup.sh
 
-# Job management
-./add.sh --id <id> --name <name> --image <image> --command <cmd> --cron "* * * * *"
-./remove.sh <job-id>
-./list.sh [--json | --quiet]
+# Run the interactive TUI
+npm start
 
-# Execution
-./run.sh <job-id> [--detach]
+# Development mode with hot reload
+npm run dev
 
-# Monitoring
-./status.sh          # Colima, scheduler, jobs, running containers
-./logs.sh --scheduler
-./logs.sh --job <id> [-f]
+# Build TypeScript
+npm run build
+
+# Type check without building
+npm run typecheck
 ```
+
+## TUI Keyboard Shortcuts
+
+**Dashboard:**
+- `j` - Go to Jobs list
+- `a` - Add new job
+- `l` - View logs
+- `q` - Quit
+
+**Job List:**
+- `↑/↓` or `j/k` - Navigate
+- `Enter` - View job details
+- `r` - Run job now
+- `Space` - Toggle enabled/disabled
+- `d` - Delete job
+- `/` - Filter jobs
+- `Esc` - Back
+
+**Log Viewer:**
+- `↑/↓` - Scroll
+- `f` - Toggle follow mode
+- `g/G` - Go to top/bottom
+- `o` - View older runs
+- `Esc` - Back
 
 ## Job JSON Structure
 
@@ -72,11 +134,28 @@ Built during `./setup.sh` from `images/` directory:
 - **agent-oven/python-tasks**: Python 3.12 with AI/data libs (openai, anthropic, langchain, pandas)
 - **agent-oven/node-tasks**: Node 20 with TypeScript and automation tools (puppeteer, playwright, zx)
 
-## Remote Access
+## Configuration
 
-The `ssh-scripts/` directory contains wrappers for running commands on a remote Mac Mini. These expect a `config.sh` with `MAC_MINI_HOST`, `MAC_MINI_PORT`, `MAC_MINI_USER`, and `AGENT_OVEN_PROJECT_DIR` variables.
+User config stored at `~/.config/agent-oven/config.json` (XDG compliant):
+
+```json
+{
+  "projectDir": "/path/to/agent-oven",
+  "colima": { "cpu": 2, "memory": 4, "disk": 20 },
+  "docker": { "defaultCpus": 1, "defaultMemory": "512m" },
+  "timezone": "America/Los_Angeles"
+}
+```
 
 ## Logs
 
 - Scheduler log: `logs/scheduler.log`
 - Job logs: `logs/jobs/<job-id>/<timestamp>.log`
+
+## Development
+
+The codebase uses:
+- **TypeScript** with strict mode
+- **React 18** + **Ink 5** for the TUI
+- **execa** for shell command execution
+- ES modules throughout (`"type": "module"`)
