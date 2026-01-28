@@ -45,7 +45,6 @@ Desktop.ini
 .env
 .env.*
 !.env.example
-config.sh
 *.pem
 *.key
 
@@ -54,7 +53,6 @@ config.sh
 
 # npm
 .npm/
-package-lock.json
 
 # Optional: uncomment if using yarn
 # yarn.lock
