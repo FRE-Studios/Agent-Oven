@@ -1,20 +1,21 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(ls:*)"
     ]
   },
   "hooks": {
-      "UserPromptSubmit": [
-        {
-          "matcher": "",
-          "hooks": [
-            {
-              "type": "command",
-              "command": "jq -r '.prompt' | { read -r p; head -n 2 /Users/fernandodelrey/Developer/agent-oven/docs/dev/prompt_history.md; echo \"$(date '+%Y-%m-%d %H:%M:%S'): $p\"; tail -n +3 /Users/fernandodelrey/Developer/agent-oven/docs/dev/prompt_history.md; } > /tmp/ph_tmp && mv /tmp/ph_tmp /Users/fernandodelrey/Developer/agent-oven/docs/dev/prompt_history.md"
-            }
-          ]
-        }
-      ]
-    }
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.prompt' | { read -r p; head -n 2 /Users/fernandodelrey/Developer/agent-oven/docs/dev/prompt_history.md; echo \"$(date '+%Y-%m-%d %H:%M:%S'): $p\"; tail -n +3 /Users/fernandodelrey/Developer/agent-oven/docs/dev/prompt_history.md; } > /tmp/ph_tmp && mv /tmp/ph_tmp /Users/fernandodelrey/Developer/agent-oven/docs/dev/prompt_history.md"
+          }
+        ]
+      }
+    ]
+  }
 }

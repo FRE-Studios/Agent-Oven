@@ -43,8 +43,26 @@ function readJobsFile(config: Config): JobsFile {
     return { jobs: [] };
   }
 
-  const content = fs.readFileSync(jobsPath, 'utf-8');
-  const data = JSON.parse(content) as { jobs: Record<string, unknown>[] };
+  let content: string;
+  try {
+    content = fs.readFileSync(jobsPath, 'utf-8');
+  } catch (err) {
+    console.error(`Warning: Failed to read ${jobsPath}:`, err);
+    return { jobs: [] };
+  }
+
+  let data: { jobs: Record<string, unknown>[] };
+  try {
+    data = JSON.parse(content) as { jobs: Record<string, unknown>[] };
+  } catch (err) {
+    console.error(`Warning: Failed to parse ${jobsPath} - file may be corrupted:`, err);
+    return { jobs: [] };
+  }
+
+  if (!data.jobs || !Array.isArray(data.jobs)) {
+    console.error(`Warning: ${jobsPath} has invalid structure (missing "jobs" array)`);
+    return { jobs: [] };
+  }
 
   // Normalize all jobs on read
   return {

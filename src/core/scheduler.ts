@@ -61,6 +61,31 @@ function matchesCronField(field: string, currentValue: number): boolean {
 }
 
 /**
+ * Check if a weekday cron field matches, treating both 0 and 7 as Sunday.
+ * Standard cron: 0=Sunday, 1=Monday, ..., 6=Saturday, 7=Sunday.
+ * JS getDay(): 0=Sunday, 1=Monday, ..., 6=Saturday.
+ */
+function matchesWeekdayField(field: string, currentWeekday: number): boolean {
+  if (field === '*') {
+    return true;
+  }
+
+  // Check if the field matches the current weekday directly
+  if (matchesCronField(field, currentWeekday)) {
+    return true;
+  }
+
+  // If today is Sunday (0), also check against 7
+  if (currentWeekday === 0 && matchesCronField(field, 7)) {
+    return true;
+  }
+
+  // If the field contains 7 and today is Sunday (0), already handled above.
+  // If the field contains 0 and today is Sunday, already handled by direct match.
+  return false;
+}
+
+/**
  * Check if a cron expression matches the current time
  */
 export function cronMatches(cronExpr: string, date: Date = new Date()): boolean {
@@ -77,14 +102,14 @@ export function cronMatches(cronExpr: string, date: Date = new Date()): boolean 
   const currentHour = date.getHours();
   const currentDay = date.getDate();
   const currentMonth = date.getMonth() + 1; // JavaScript months are 0-indexed
-  const currentWeekday = date.getDay() || 7; // Convert Sunday from 0 to 7
+  const currentWeekday = date.getDay(); // 0=Sunday, 6=Saturday
 
   return (
     matchesCronField(minute, currentMinute) &&
     matchesCronField(hour, currentHour) &&
     matchesCronField(day, currentDay) &&
     matchesCronField(month, currentMonth) &&
-    matchesCronField(weekday, currentWeekday)
+    matchesWeekdayField(weekday, currentWeekday)
   );
 }
 
@@ -172,7 +197,10 @@ export function describeCron(cronExpr: string): string {
  * Describe a weekday field
  */
 function describeWeekday(field: string): string {
-  const names = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // Support both 0=Sunday and 7=Sunday conventions
+  const names: Record<number, string> = {
+    0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat', 7: 'Sun',
+  };
 
   if (field.includes(',')) {
     const days = field.split(',').map((d) => names[parseInt(d, 10)] || d);
@@ -181,11 +209,11 @@ function describeWeekday(field: string): string {
 
   if (field.includes('-')) {
     const [start, end] = field.split('-').map((d) => parseInt(d, 10));
-    return `${names[start]} to ${names[end]}`;
+    return `${names[start] || start} to ${names[end] || end}`;
   }
 
   const day = parseInt(field, 10);
-  if (day >= 1 && day <= 7) {
+  if (day in names) {
     return `Every ${names[day]}`;
   }
 

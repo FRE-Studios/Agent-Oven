@@ -6,6 +6,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JOBS_FILE="$SCRIPT_DIR/jobs.json"
 LOG_DIR="$SCRIPT_DIR/logs"
 SCHEDULER_LOG="$LOG_DIR/scheduler.log"
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/agent-oven/config.json"
+
+# Default Colima resources
+DEFAULT_COLIMA_CPU=2
+DEFAULT_COLIMA_MEMORY=4
+DEFAULT_COLIMA_DISK=20
+
+# Read a Colima config value from config.json, falling back to default
+read_colima_config() {
+    local key="$1"
+    local default="$2"
+
+    if [ -f "$CONFIG_FILE" ] && command -v jq &>/dev/null; then
+        local value
+        value=$(jq -r ".colima.${key} // empty" "$CONFIG_FILE" 2>/dev/null)
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            echo "$value"
+            return
+        fi
+    fi
+    echo "$default"
+}
 
 # Logging function
 log() {
@@ -15,8 +37,13 @@ log() {
 # Check if Colima is running, start if needed
 ensure_colima() {
     if ! colima status &>/dev/null; then
-        log "Colima not running, starting..."
-        colima start --cpu 2 --memory 4 --disk 20
+        local cpu memory disk
+        cpu=$(read_colima_config "cpu" "$DEFAULT_COLIMA_CPU")
+        memory=$(read_colima_config "memory" "$DEFAULT_COLIMA_MEMORY")
+        disk=$(read_colima_config "disk" "$DEFAULT_COLIMA_DISK")
+
+        log "Colima not running, starting with cpu=$cpu memory=$memory disk=$disk..."
+        colima start --cpu "$cpu" --memory "$memory" --disk "$disk"
         sleep 5
     fi
 }
@@ -152,52 +179,54 @@ run_docker_job() {
 
     log "Running docker job: $job_id"
 
-    # Build docker command
-    local docker_cmd="docker run --rm --name oven-${job_id}"
+    # Build docker command as an array to prevent command injection
+    local -a docker_args=(run --rm "--name=oven-${job_id}")
 
     # Add resource limits
-    docker_cmd+=" --cpus=1 --memory=512m"
+    docker_args+=(--cpus=1 --memory=512m)
 
     # Add volumes
     if [ "$volumes" != "null" ] && [ -n "$volumes" ]; then
         while IFS= read -r vol; do
-            vol=$(echo "$vol" | tr -d '"')
-            [ -n "$vol" ] && docker_cmd+=" -v \"$vol\""
+            [ -n "$vol" ] && docker_args+=(-v "$vol")
         done <<< "$(echo "$volumes" | jq -r '.[]' 2>/dev/null)"
     fi
 
     # Add environment variables
     if [ "$env_vars" != "null" ] && [ -n "$env_vars" ]; then
         while IFS= read -r key; do
-            local value=$(echo "$env_vars" | jq -r ".[\"$key\"]")
-            docker_cmd+=" -e \"$key=$value\""
+            local value
+            value=$(echo "$env_vars" | jq -r --arg k "$key" '.[$k]')
+            docker_args+=(-e "${key}=${value}")
         done <<< "$(echo "$env_vars" | jq -r 'keys[]' 2>/dev/null)"
     fi
 
-    # Add image and command
-    docker_cmd+=" $image"
+    # Add image
+    docker_args+=("$image")
 
     # Parse command (can be string or array)
     if echo "$command" | jq -e 'type == "array"' &>/dev/null; then
-        local cmd_str=$(echo "$command" | jq -r '.[]' | tr '\n' ' ')
-        docker_cmd+=" $cmd_str"
+        while IFS= read -r arg; do
+            [ -n "$arg" ] && docker_args+=("$arg")
+        done <<< "$(echo "$command" | jq -r '.[]')"
     else
-        docker_cmd+=" $command"
+        # String command - let docker handle it
+        docker_args+=("$command")
     fi
 
     # Execute with timeout
-    log "Executing: $docker_cmd"
+    log "Executing: docker ${docker_args[*]}"
     {
         echo "=== Job: $job_id ==="
         echo "=== Type: docker ==="
         echo "=== Started: $(date) ==="
-        echo "=== Command: $docker_cmd ==="
+        echo "=== Command: docker ${docker_args[*]} ==="
         echo ""
 
         if [ -n "$timeout" ] && [ "$timeout" != "null" ]; then
-            timeout "${timeout}s" bash -c "$docker_cmd" 2>&1
+            timeout "${timeout}s" docker "${docker_args[@]}" 2>&1
         else
-            bash -c "$docker_cmd" 2>&1
+            docker "${docker_args[@]}" 2>&1
         fi
         local exit_code=$?
 
@@ -234,49 +263,50 @@ run_pipeline_job() {
 
     log "Running pipeline job: $job_id (pipeline: $pipeline, repo: $repo)"
 
-    # Build docker command
-    local docker_cmd="docker run --rm --name oven-${job_id}"
+    # Build docker command as an array to prevent command injection
+    local -a docker_args=(run --rm "--name=oven-${job_id}")
 
     # Add resource limits (default 2 CPU / 2g for pipelines)
-    docker_cmd+=" --cpus=2 --memory=2g"
+    docker_args+=(--cpus=2 --memory=2g)
 
     # Mount auth credentials (read-only)
     if [ -d "$HOME/.claude" ]; then
-        docker_cmd+=" -v \"$HOME/.claude:/root/.claude:ro\""
+        docker_args+=(-v "$HOME/.claude:/root/.claude:ro")
     fi
     if [ -d "$HOME/.config/gh" ]; then
-        docker_cmd+=" -v \"$HOME/.config/gh:/root/.config/gh:ro\""
+        docker_args+=(-v "$HOME/.config/gh:/root/.config/gh:ro")
     fi
 
     # Add environment variables
     if [ "$env_vars" != "null" ] && [ -n "$env_vars" ]; then
         while IFS= read -r key; do
-            local value=$(echo "$env_vars" | jq -r ".[\"$key\"]")
-            docker_cmd+=" -e \"$key=$value\""
+            local value
+            value=$(echo "$env_vars" | jq -r --arg k "$key" '.[$k]')
+            docker_args+=(-e "${key}=${value}")
         done <<< "$(echo "$env_vars" | jq -r 'keys[]' 2>/dev/null)"
     fi
 
     # Add image and entrypoint args
-    docker_cmd+=" agent-oven/pipeline-runner \"$repo\" \"$branch\" \"$pipeline\""
+    docker_args+=(agent-oven/pipeline-runner "$repo" "$branch" "$pipeline")
 
     # Default timeout: 30 minutes for pipeline jobs
     local effective_timeout="${timeout:-1800}"
 
     # Execute with timeout
-    log "Executing: $docker_cmd"
+    log "Executing: docker ${docker_args[*]}"
     {
         echo "=== Job: $job_id ==="
         echo "=== Type: agent-pipeline ==="
         echo "=== Pipeline: $pipeline ==="
         echo "=== Repo: $repo ($branch) ==="
         echo "=== Started: $(date) ==="
-        echo "=== Command: $docker_cmd ==="
+        echo "=== Command: docker ${docker_args[*]} ==="
         echo ""
 
         if [ -n "$effective_timeout" ] && [ "$effective_timeout" != "null" ]; then
-            timeout "${effective_timeout}s" bash -c "$docker_cmd" 2>&1
+            timeout "${effective_timeout}s" docker "${docker_args[@]}" 2>&1
         else
-            bash -c "$docker_cmd" 2>&1
+            docker "${docker_args[@]}" 2>&1
         fi
         local exit_code=$?
 
@@ -301,24 +331,53 @@ run_pipeline_job() {
 # Update job's last_run timestamp
 update_last_run() {
     local job_id="$1"
-    local timestamp=$(date '+%Y-%m-%dT%H:%M:%S')
+    local timestamp
+    timestamp=$(date '+%Y-%m-%dT%H:%M:%S')
 
-    local tmp_file=$(mktemp)
-    jq --arg id "$job_id" --arg ts "$timestamp" \
+    local tmp_file
+    tmp_file=$(mktemp) || { log "ERROR: Failed to create temp file for update_last_run"; return 1; }
+
+    if ! jq --arg id "$job_id" --arg ts "$timestamp" \
         '(.jobs[] | select(.id == $id) | .last_run) = $ts' \
-        "$JOBS_FILE" > "$tmp_file"
-    mv "$tmp_file" "$JOBS_FILE"
+        "$JOBS_FILE" > "$tmp_file"; then
+        log "ERROR: jq failed to update last_run for job $job_id"
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    # Validate the output is valid JSON before replacing
+    if ! jq empty "$tmp_file" 2>/dev/null; then
+        log "ERROR: jq produced invalid JSON for update_last_run, aborting"
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    mv "$tmp_file" "$JOBS_FILE" || { log "ERROR: Failed to write updated jobs.json"; return 1; }
 }
 
 # Remove a job from jobs.json
 remove_job() {
     local job_id="$1"
 
-    local tmp_file=$(mktemp)
-    jq --arg id "$job_id" \
+    local tmp_file
+    tmp_file=$(mktemp) || { log "ERROR: Failed to create temp file for remove_job"; return 1; }
+
+    if ! jq --arg id "$job_id" \
         '.jobs = [.jobs[] | select(.id != $id)]' \
-        "$JOBS_FILE" > "$tmp_file"
-    mv "$tmp_file" "$JOBS_FILE"
+        "$JOBS_FILE" > "$tmp_file"; then
+        log "ERROR: jq failed to remove job $job_id"
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    # Validate the output is valid JSON before replacing
+    if ! jq empty "$tmp_file" 2>/dev/null; then
+        log "ERROR: jq produced invalid JSON for remove_job, aborting"
+        rm -f "$tmp_file"
+        return 1
+    fi
+
+    mv "$tmp_file" "$JOBS_FILE" || { log "ERROR: Failed to write updated jobs.json"; return 1; }
 
     log "Removed completed one-time job: $job_id"
 }

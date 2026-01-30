@@ -6,6 +6,28 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHD_PLIST="$HOME/Library/LaunchAgents/com.agent-oven.scheduler.plist"
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/agent-oven/config.json"
+
+# Default Colima resources
+DEFAULT_COLIMA_CPU=2
+DEFAULT_COLIMA_MEMORY=4
+DEFAULT_COLIMA_DISK=20
+
+# Read a Colima config value from config.json, falling back to default
+read_colima_config() {
+    local key="$1"
+    local default="$2"
+
+    if [ -f "$CONFIG_FILE" ] && command -v jq &>/dev/null; then
+        local value
+        value=$(jq -r ".colima.${key} // empty" "$CONFIG_FILE" 2>/dev/null)
+        if [ -n "$value" ] && [ "$value" != "null" ]; then
+            echo "$value"
+            return
+        fi
+    fi
+    echo "$default"
+}
 
 echo "=== Agent-Oven Setup ==="
 echo ""
@@ -28,8 +50,11 @@ brew install colima docker jq 2>/dev/null || {
 echo ""
 echo "Checking Colima status..."
 if ! colima status &>/dev/null; then
-    echo "Starting Colima..."
-    colima start --cpu 2 --memory 4 --disk 20
+    COLIMA_CPU=$(read_colima_config "cpu" "$DEFAULT_COLIMA_CPU")
+    COLIMA_MEMORY=$(read_colima_config "memory" "$DEFAULT_COLIMA_MEMORY")
+    COLIMA_DISK=$(read_colima_config "disk" "$DEFAULT_COLIMA_DISK")
+    echo "Starting Colima (cpu=$COLIMA_CPU, memory=$COLIMA_MEMORY, disk=$COLIMA_DISK)..."
+    colima start --cpu "$COLIMA_CPU" --memory "$COLIMA_MEMORY" --disk "$COLIMA_DISK"
 else
     echo "Colima is already running."
 fi
