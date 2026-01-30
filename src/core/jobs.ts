@@ -3,8 +3,35 @@
  */
 
 import * as fs from 'node:fs';
-import type { Config, Job, JobsFile, AddJobOptions, UpdateJobOptions } from './types.js';
+import type {
+  Config,
+  Job,
+  DockerJob,
+  PipelineJob,
+  JobsFile,
+  AddJobOptions,
+  UpdateJobOptions,
+} from './types.js';
+import { isDockerJob, isPipelineJob } from './types.js';
 import { getJobsFilePath } from './config.js';
+
+/**
+ * Normalize a legacy job (no `type` field) to a DockerJob.
+ * Jobs with `image` and `command` but no `type` are treated as Docker jobs.
+ */
+function normalizeJob(raw: Record<string, unknown>): Job {
+  if (raw.type === 'docker' || raw.type === 'agent-pipeline') {
+    return raw as unknown as Job;
+  }
+
+  // Legacy job: has image+command but no type field
+  if ('image' in raw && 'command' in raw) {
+    return { ...raw, type: 'docker' } as unknown as DockerJob;
+  }
+
+  // Unknown format - default to docker type to avoid breaking
+  return { ...raw, type: 'docker' } as unknown as DockerJob;
+}
 
 /**
  * Read the jobs file
@@ -17,7 +44,12 @@ function readJobsFile(config: Config): JobsFile {
   }
 
   const content = fs.readFileSync(jobsPath, 'utf-8');
-  return JSON.parse(content) as JobsFile;
+  const data = JSON.parse(content) as { jobs: Record<string, unknown>[] };
+
+  // Normalize all jobs on read
+  return {
+    jobs: data.jobs.map(normalizeJob),
+  };
 }
 
 /**
@@ -55,9 +87,19 @@ export function addJob(config: Config, options: AddJobOptions): Job {
     throw new Error(`Job with ID "${options.id}" already exists`);
   }
 
-  // Validate required fields
-  if (!options.id || !options.name || !options.image || !options.command || !options.schedule) {
-    throw new Error('Missing required fields: id, name, image, command, schedule');
+  // Validate required fields based on type
+  if (!options.id || !options.name || !options.schedule) {
+    throw new Error('Missing required fields: id, name, schedule');
+  }
+
+  if (options.type === 'docker') {
+    if (!options.image || !options.command) {
+      throw new Error('Docker jobs require: image, command');
+    }
+  } else if (options.type === 'agent-pipeline') {
+    if (!options.source || !options.pipeline) {
+      throw new Error('Pipeline jobs require: source, pipeline');
+    }
   }
 
   // Validate ID format (alphanumeric, hyphens, underscores)
@@ -66,17 +108,9 @@ export function addJob(config: Config, options: AddJobOptions): Job {
   }
 
   const job: Job = {
-    id: options.id,
-    name: options.name,
-    image: options.image,
-    command: options.command,
-    schedule: options.schedule,
-    volumes: options.volumes,
-    env: options.env,
-    timeout: options.timeout,
-    enabled: options.enabled ?? true,
+    ...options,
     last_run: null,
-  };
+  } as Job;
 
   data.jobs.push(job);
   writeJobsFile(config, data);
@@ -99,7 +133,7 @@ export function updateJob(config: Config, jobId: string, updates: UpdateJobOptio
   const updatedJob: Job = {
     ...data.jobs[index],
     ...updates,
-  };
+  } as Job;
 
   data.jobs[index] = updatedJob;
   writeJobsFile(config, data);
@@ -173,6 +207,7 @@ export function getBuiltInImages(): string[] {
     'agent-oven/base-tasks',
     'agent-oven/python-tasks',
     'agent-oven/node-tasks',
+    'agent-oven/pipeline-runner',
   ];
 }
 
@@ -192,12 +227,28 @@ export function validateJob(job: Partial<Job>): string[] {
     errors.push('Job name is required');
   }
 
-  if (!job.image) {
-    errors.push('Docker image is required');
-  }
+  // Type-specific validation
+  const jobType = (job as Record<string, unknown>).type;
 
-  if (!job.command) {
-    errors.push('Command is required');
+  if (jobType === 'agent-pipeline') {
+    const pj = job as Partial<PipelineJob>;
+    if (!pj.source) {
+      errors.push('Source configuration is required for pipeline jobs');
+    } else if (!pj.source.repo) {
+      errors.push('Source repo URL is required');
+    }
+    if (!pj.pipeline) {
+      errors.push('Pipeline name is required');
+    }
+  } else {
+    // Docker job (default)
+    const dj = job as Partial<DockerJob>;
+    if (!dj.image) {
+      errors.push('Docker image is required');
+    }
+    if (!dj.command) {
+      errors.push('Command is required');
+    }
   }
 
   if (!job.schedule) {
@@ -226,7 +277,18 @@ export function validateJob(job: Partial<Job>): string[] {
     }
   }
 
-  if (job.timeout !== undefined && job.timeout < 0) {
+  // Validate resources if present
+  if (job.resources) {
+    if (job.resources.timeout !== undefined && job.resources.timeout < 0) {
+      errors.push('Resources timeout must be a positive number');
+    }
+    if (job.resources.cpus !== undefined && job.resources.cpus <= 0) {
+      errors.push('Resources CPUs must be a positive number');
+    }
+  }
+
+  // Legacy timeout validation (DockerJob)
+  if ('timeout' in job && (job as DockerJob).timeout !== undefined && (job as DockerJob).timeout! < 0) {
     errors.push('Timeout must be a positive number');
   }
 

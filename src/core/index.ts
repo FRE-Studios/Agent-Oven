@@ -7,3 +7,4 @@ export * from './config.js';
 export * from './jobs.js';
 export * from './docker.js';
 export * from './scheduler.js';
+export * from './auth.js';

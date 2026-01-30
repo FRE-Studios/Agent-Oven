@@ -107,8 +107,38 @@ once_should_run() {
     return 1
 }
 
-# Run a job in Docker
+# Route job execution to the appropriate handler
 run_job() {
+    local job_id="$1"
+    local job_json="$2"
+
+    local job_type=$(echo "$job_json" | jq -r '.type // "docker"')
+
+    case "$job_type" in
+        "docker")
+            local image=$(echo "$job_json" | jq -r '.image')
+            local command=$(echo "$job_json" | jq -c '.command')
+            local volumes=$(echo "$job_json" | jq -c '.volumes // empty')
+            local env_vars=$(echo "$job_json" | jq -c '.env // empty')
+            local timeout=$(echo "$job_json" | jq -r '.resources.timeout // .timeout // empty')
+            run_docker_job "$job_id" "$image" "$command" "$volumes" "$env_vars" "$timeout"
+            ;;
+        "agent-pipeline")
+            local repo=$(echo "$job_json" | jq -r '.source.repo')
+            local branch=$(echo "$job_json" | jq -r '.source.branch // "main"')
+            local pipeline=$(echo "$job_json" | jq -r '.pipeline')
+            local timeout=$(echo "$job_json" | jq -r '.resources.timeout // empty')
+            local env_vars=$(echo "$job_json" | jq -c '.env // empty')
+            run_pipeline_job "$job_id" "$repo" "$branch" "$pipeline" "$timeout" "$env_vars"
+            ;;
+        *)
+            log "Unknown job type: $job_type for job $job_id"
+            ;;
+    esac
+}
+
+# Run a Docker container job
+run_docker_job() {
     local job_id="$1"
     local image="$2"
     local command="$3"
@@ -120,7 +150,7 @@ run_job() {
     mkdir -p "$job_log_dir"
     local log_file="$job_log_dir/$(date '+%Y%m%d-%H%M%S').log"
 
-    log "Running job: $job_id"
+    log "Running docker job: $job_id"
 
     # Build docker command
     local docker_cmd="docker run --rm --name oven-${job_id}"
@@ -159,6 +189,7 @@ run_job() {
     log "Executing: $docker_cmd"
     {
         echo "=== Job: $job_id ==="
+        echo "=== Type: docker ==="
         echo "=== Started: $(date) ==="
         echo "=== Command: $docker_cmd ==="
         echo ""
@@ -183,6 +214,85 @@ run_job() {
         log "Job $job_id completed successfully"
     else
         log "Job $job_id failed with exit code $result"
+    fi
+
+    return $result
+}
+
+# Run an agent pipeline job
+run_pipeline_job() {
+    local job_id="$1"
+    local repo="$2"
+    local branch="$3"
+    local pipeline="$4"
+    local timeout="$5"
+    local env_vars="$6"
+
+    local job_log_dir="$LOG_DIR/jobs/$job_id"
+    mkdir -p "$job_log_dir"
+    local log_file="$job_log_dir/$(date '+%Y%m%d-%H%M%S').log"
+
+    log "Running pipeline job: $job_id (pipeline: $pipeline, repo: $repo)"
+
+    # Build docker command
+    local docker_cmd="docker run --rm --name oven-${job_id}"
+
+    # Add resource limits (default 2 CPU / 2g for pipelines)
+    docker_cmd+=" --cpus=2 --memory=2g"
+
+    # Mount auth credentials (read-only)
+    if [ -d "$HOME/.claude" ]; then
+        docker_cmd+=" -v \"$HOME/.claude:/root/.claude:ro\""
+    fi
+    if [ -d "$HOME/.config/gh" ]; then
+        docker_cmd+=" -v \"$HOME/.config/gh:/root/.config/gh:ro\""
+    fi
+
+    # Add environment variables
+    if [ "$env_vars" != "null" ] && [ -n "$env_vars" ]; then
+        while IFS= read -r key; do
+            local value=$(echo "$env_vars" | jq -r ".[\"$key\"]")
+            docker_cmd+=" -e \"$key=$value\""
+        done <<< "$(echo "$env_vars" | jq -r 'keys[]' 2>/dev/null)"
+    fi
+
+    # Add image and entrypoint args
+    docker_cmd+=" agent-oven/pipeline-runner \"$repo\" \"$branch\" \"$pipeline\""
+
+    # Default timeout: 30 minutes for pipeline jobs
+    local effective_timeout="${timeout:-1800}"
+
+    # Execute with timeout
+    log "Executing: $docker_cmd"
+    {
+        echo "=== Job: $job_id ==="
+        echo "=== Type: agent-pipeline ==="
+        echo "=== Pipeline: $pipeline ==="
+        echo "=== Repo: $repo ($branch) ==="
+        echo "=== Started: $(date) ==="
+        echo "=== Command: $docker_cmd ==="
+        echo ""
+
+        if [ -n "$effective_timeout" ] && [ "$effective_timeout" != "null" ]; then
+            timeout "${effective_timeout}s" bash -c "$docker_cmd" 2>&1
+        else
+            bash -c "$docker_cmd" 2>&1
+        fi
+        local exit_code=$?
+
+        echo ""
+        echo "=== Finished: $(date) ==="
+        echo "=== Exit Code: $exit_code ==="
+
+        return $exit_code
+    } > "$log_file" 2>&1
+
+    local result=$?
+
+    if [ $result -eq 0 ]; then
+        log "Pipeline job $job_id completed successfully"
+    else
+        log "Pipeline job $job_id failed with exit code $result"
     fi
 
     return $result
@@ -238,11 +348,6 @@ main() {
 
     jq -c '.jobs[]' "$JOBS_FILE" | while read -r job; do
         local job_id=$(echo "$job" | jq -r '.id')
-        local image=$(echo "$job" | jq -r '.image')
-        local command=$(echo "$job" | jq -c '.command')
-        local volumes=$(echo "$job" | jq -c '.volumes // empty')
-        local env_vars=$(echo "$job" | jq -c '.env // empty')
-        local timeout=$(echo "$job" | jq -r '.timeout // empty')
         local schedule_type=$(echo "$job" | jq -r '.schedule.type')
         local last_run=$(echo "$job" | jq -r '.last_run')
         local enabled=$(echo "$job" | jq -r '.enabled // true')
@@ -273,7 +378,7 @@ main() {
         esac
 
         if [ "$should_run" = "true" ]; then
-            run_job "$job_id" "$image" "$command" "$volumes" "$env_vars" "$timeout"
+            run_job "$job_id" "$job"
             update_last_run "$job_id"
 
             # Mark one-time jobs for removal

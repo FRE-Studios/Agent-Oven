@@ -6,7 +6,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import type { Config, ColimaConfig, DockerDefaults } from './types.js';
+import type { Config, ColimaConfig, DockerDefaults, AuthConfig } from './types.js';
 
 /** Default Colima configuration */
 const DEFAULT_COLIMA: ColimaConfig = {
@@ -21,11 +21,19 @@ const DEFAULT_DOCKER: DockerDefaults = {
   defaultMemory: '512m',
 };
 
+/** Default auth configuration */
+const DEFAULT_AUTH: AuthConfig = {
+  defaultMode: 'host-login',
+  claudeCredPath: path.join(os.homedir(), '.claude'),
+  ghCredPath: path.join(os.homedir(), '.config', 'gh'),
+};
+
 /** Default configuration */
 const DEFAULT_CONFIG: Omit<Config, 'projectDir'> = {
   colima: DEFAULT_COLIMA,
   docker: DEFAULT_DOCKER,
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  auth: DEFAULT_AUTH,
 };
 
 /**
@@ -117,6 +125,7 @@ export function loadConfig(): Config {
     colima: { ...DEFAULT_COLIMA, ...savedConfig.colima },
     docker: { ...DEFAULT_DOCKER, ...savedConfig.docker },
     timezone: savedConfig.timezone ?? DEFAULT_CONFIG.timezone,
+    auth: { ...DEFAULT_AUTH, ...savedConfig.auth },
   };
 
   return config;
@@ -182,6 +191,7 @@ export function updateConfig(updates: Partial<Config>): Config {
     ...updates,
     colima: { ...current.colima, ...updates.colima },
     docker: { ...current.docker, ...updates.docker },
+    auth: { ...DEFAULT_AUTH, ...current.auth, ...updates.auth },
   };
   saveConfig(updated);
   return updated;

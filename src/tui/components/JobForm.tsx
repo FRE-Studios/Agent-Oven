@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import type { Config, Job, Schedule } from '../../core/types.js';
+import type { Config, Job, DockerJob, Schedule } from '../../core/types.js';
 import { addJob, updateJob, validateJob, getBuiltInImages } from '../../core/jobs.js';
 import { describeCron, validateCron } from '../../core/scheduler.js';
 
@@ -18,15 +18,17 @@ const FIELDS: Field[] = ['id', 'name', 'image', 'command', 'scheduleType', 'cron
 
 export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps) {
   const isEdit = !!existingJob;
+  // Form only supports Docker jobs; cast for field access
+  const existingDocker = existingJob?.type === 'docker' ? existingJob : undefined;
 
   // Form state
   const [id, setId] = useState(existingJob?.id ?? '');
   const [name, setName] = useState(existingJob?.name ?? '');
-  const [image, setImage] = useState(existingJob?.image ?? 'agent-oven/python-tasks');
+  const [image, setImage] = useState(existingDocker?.image ?? 'agent-oven/python-tasks');
   const [command, setCommand] = useState(
-    Array.isArray(existingJob?.command)
-      ? existingJob.command.join(' ')
-      : existingJob?.command ?? ''
+    Array.isArray(existingDocker?.command)
+      ? existingDocker.command.join(' ')
+      : existingDocker?.command ?? ''
   );
   const [scheduleType, setScheduleType] = useState<'cron' | 'once'>(
     existingJob?.schedule.type ?? 'cron'
@@ -37,8 +39,8 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
   const [datetime, setDatetime] = useState(
     existingJob?.schedule.type === 'once' ? existingJob.schedule.datetime : ''
   );
-  const [volumes, setVolumes] = useState(existingJob?.volumes?.join('\n') ?? '');
-  const [timeout, setTimeout] = useState(existingJob?.timeout?.toString() ?? '300');
+  const [volumes, setVolumes] = useState(existingDocker?.volumes?.join('\n') ?? '');
+  const [timeout, setTimeout] = useState(existingDocker?.timeout?.toString() ?? '300');
 
   // UI state
   const [activeField, setActiveField] = useState<Field>(isEdit ? 'name' : 'id');
@@ -103,8 +105,9 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
     // Parse command
     const cmdParts = command.trim().split(/\s+/);
 
-    // Build job object
-    const jobData: Partial<Job> = {
+    // Build job object (form creates Docker jobs only)
+    const jobData: Partial<DockerJob> = {
+      type: 'docker',
       id,
       name,
       image,

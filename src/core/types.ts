@@ -21,28 +21,92 @@ export type Schedule = CronSchedule | OneTimeSchedule;
 /** Environment variables for a job */
 export type EnvVars = Record<string, string>;
 
-/** A scheduled job definition */
-export interface Job {
+/** Auth mode for pipeline jobs */
+export type AuthMode = 'host-login' | 'api-key';
+
+/** Source repository configuration for pipeline jobs */
+export interface SourceConfig {
+  /** Git repository URL */
+  repo: string;
+  /** Branch to check out (default: "main") */
+  branch?: string;
+}
+
+/** Resource limits for a job */
+export interface ResourceConfig {
+  /** Timeout in seconds */
+  timeout?: number;
+  /** Memory limit (e.g., "512m", "2g") */
+  memory?: string;
+  /** CPU limit (number of CPUs) */
+  cpus?: number;
+}
+
+/** Notification configuration */
+export interface NotificationConfig {
+  /** Slack webhook URL */
+  slack?: string;
+  /** Notify on failure */
+  onFailure?: boolean;
+  /** Notify on success */
+  onSuccess?: boolean;
+}
+
+/** Shared fields for all job types */
+interface BaseJob {
   /** Unique identifier for the job */
   id: string;
   /** Human-readable name */
   name: string;
+  /** Environment variables */
+  env?: EnvVars;
+  /** Schedule configuration */
+  schedule: Schedule;
+  /** Resource limits */
+  resources?: ResourceConfig;
+  /** Notification settings */
+  notifications?: NotificationConfig;
+  /** Whether the job is enabled */
+  enabled?: boolean;
+  /** Last run timestamp (ISO 8601) */
+  last_run?: string | null;
+}
+
+/** A Docker container job */
+export interface DockerJob extends BaseJob {
+  type: 'docker';
   /** Docker image to run */
   image: string;
   /** Command to execute (string or array of strings) */
   command: string | string[];
   /** Volume mounts (host:container[:mode]) */
   volumes?: string[];
-  /** Environment variables */
-  env?: EnvVars;
-  /** Schedule configuration */
-  schedule: Schedule;
-  /** Timeout in seconds */
+  /** Timeout in seconds (legacy, prefer resources.timeout) */
   timeout?: number;
-  /** Whether the job is enabled */
-  enabled?: boolean;
-  /** Last run timestamp (ISO 8601) */
-  last_run?: string | null;
+}
+
+/** An agent pipeline job */
+export interface PipelineJob extends BaseJob {
+  type: 'agent-pipeline';
+  /** Source repository configuration */
+  source: SourceConfig;
+  /** Pipeline name to run */
+  pipeline: string;
+  /** Auth mode override (defaults to config-level default) */
+  auth?: AuthMode;
+}
+
+/** Discriminated union of all job types */
+export type Job = DockerJob | PipelineJob;
+
+/** Type guard for Docker jobs */
+export function isDockerJob(job: Job): job is DockerJob {
+  return job.type === 'docker';
+}
+
+/** Type guard for Pipeline jobs */
+export function isPipelineJob(job: Job): job is PipelineJob {
+  return job.type === 'agent-pipeline';
 }
 
 /** The jobs.json file structure */
@@ -63,6 +127,16 @@ export interface DockerDefaults {
   defaultMemory: string;
 }
 
+/** Auth configuration */
+export interface AuthConfig {
+  /** Default auth mode for pipeline jobs */
+  defaultMode: AuthMode;
+  /** Path to Claude credentials directory */
+  claudeCredPath: string;
+  /** Path to GitHub CLI credentials directory */
+  ghCredPath: string;
+}
+
 /** Application configuration */
 export interface Config {
   /** Path to the agent-oven project directory */
@@ -73,6 +147,8 @@ export interface Config {
   docker: DockerDefaults;
   /** Timezone for schedule evaluation */
   timezone: string;
+  /** Auth configuration for pipeline jobs */
+  auth?: AuthConfig;
 }
 
 /** Status of Colima VM */
@@ -128,7 +204,7 @@ export interface SystemStatus {
 }
 
 /** Options for adding a new job */
-export type AddJobOptions = Omit<Job, 'last_run'>;
+export type AddJobOptions = Omit<DockerJob, 'last_run'> | Omit<PipelineJob, 'last_run'>;
 
 /** Options for updating an existing job */
-export type UpdateJobOptions = Partial<Omit<Job, 'id'>>;
+export type UpdateJobOptions = Partial<Omit<DockerJob, 'id' | 'type'>> | Partial<Omit<PipelineJob, 'id' | 'type'>>;

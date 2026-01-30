@@ -74,6 +74,12 @@ if [ -f "$SCRIPT_DIR/images/base-tasks/Dockerfile" ]; then
     docker build -t agent-oven/base-tasks "$SCRIPT_DIR/images/base-tasks"
 fi
 
+# Build pipeline-runner image if Dockerfile exists
+if [ -f "$SCRIPT_DIR/images/pipeline-runner/Dockerfile" ]; then
+    echo "Building agent-oven/pipeline-runner..."
+    docker build -t agent-oven/pipeline-runner "$SCRIPT_DIR/images/pipeline-runner"
+fi
+
 # Create LaunchAgent directory if needed
 mkdir -p "$HOME/Library/LaunchAgents"
 

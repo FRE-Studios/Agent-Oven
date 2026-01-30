@@ -9,6 +9,8 @@ import * as path from 'node:path';
 import type {
   Config,
   Job,
+  DockerJob,
+  PipelineJob,
   ColimaStatus,
   SchedulerStatus,
   RunningContainer,
@@ -16,6 +18,7 @@ import type {
   JobRunResult,
   SystemStatus,
 } from './types.js';
+import { isDockerJob, isPipelineJob } from './types.js';
 import {
   getLogsDir,
   getJobLogsDir,
@@ -23,6 +26,12 @@ import {
   getLaunchdPlistPath,
 } from './config.js';
 import { getJobStats } from './jobs.js';
+import {
+  resolveAuthMode,
+  generateAuthArgs,
+  validateAuthForJob,
+  DEFAULT_AUTH_CONFIG,
+} from './auth.js';
 
 /**
  * Check if Colima is running
@@ -216,28 +225,51 @@ export async function getSystemStatus(config: Config): Promise<SystemStatus> {
 }
 
 /**
- * Run a job immediately
+ * Prepare log file and directory for a job run.
+ */
+function prepareLogFile(config: Config, jobId: string): string {
+  const jobLogDir = getJobLogsDir(config, jobId);
+  if (!fs.existsSync(jobLogDir)) {
+    fs.mkdirSync(jobLogDir, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T').join('-').slice(0, 17);
+  return path.join(jobLogDir, `${timestamp}.log`);
+}
+
+/**
+ * Run a job immediately - routes to the appropriate handler based on job type.
  */
 export async function runJob(
   config: Config,
   job: Job,
   options: { detach?: boolean } = {}
 ): Promise<JobRunResult> {
-  // Ensure log directory exists
-  const jobLogDir = getJobLogsDir(config, job.id);
-  if (!fs.existsSync(jobLogDir)) {
-    fs.mkdirSync(jobLogDir, { recursive: true });
+  if (isPipelineJob(job)) {
+    return runPipelineJob(config, job, options);
   }
+  // Default: Docker job (also handles any legacy jobs)
+  return runDockerJob(config, job as DockerJob, options);
+}
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T').join('-').slice(0, 17);
-  const logFile = path.join(jobLogDir, `${timestamp}.log`);
+/**
+ * Run a Docker container job.
+ */
+async function runDockerJob(
+  config: Config,
+  job: DockerJob,
+  options: { detach?: boolean } = {}
+): Promise<JobRunResult> {
+  const logFile = prepareLogFile(config, job.id);
 
   // Build docker command arguments
   const args: string[] = ['run', '--rm', `--name=oven-${job.id}`];
 
-  // Add resource limits
-  args.push(`--cpus=${config.docker.defaultCpus}`);
-  args.push(`--memory=${config.docker.defaultMemory}`);
+  // Resource limits: prefer job.resources, then legacy fields, then config defaults
+  const cpus = job.resources?.cpus ?? config.docker.defaultCpus;
+  const memory = job.resources?.memory ?? config.docker.defaultMemory;
+  args.push(`--cpus=${cpus}`);
+  args.push(`--memory=${memory}`);
 
   // Add volumes
   if (job.volumes) {
@@ -263,9 +295,13 @@ export async function runJob(
     args.push(job.command);
   }
 
+  // Resolve timeout: prefer resources.timeout, then legacy timeout
+  const timeoutSeconds = job.resources?.timeout ?? job.timeout;
+
   // Write log header
   const logHeader = [
     `=== Job: ${job.id} ===`,
+    `=== Type: docker ===`,
     `=== Started: ${new Date().toISOString()} ===`,
     `=== Command: docker ${args.join(' ')} ===`,
     '',
@@ -273,9 +309,8 @@ export async function runJob(
   fs.writeFileSync(logFile, logHeader);
 
   if (options.detach) {
-    // Run in background
     const dockerArgs = [...args];
-    dockerArgs.splice(1, 0, '-d'); // Add -d after 'run'
+    dockerArgs.splice(1, 0, '-d');
 
     try {
       await execa('docker', dockerArgs);
@@ -300,11 +335,171 @@ export async function runJob(
   // Run in foreground with timeout
   try {
     const result = await execa('docker', args, {
-      timeout: job.timeout ? job.timeout * 1000 : undefined,
+      timeout: timeoutSeconds ? timeoutSeconds * 1000 : undefined,
       reject: false,
     });
 
-    // Append output to log
+    const stdout = typeof result.stdout === 'string' ? result.stdout : '';
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    const logContent = [
+      stdout,
+      stderr,
+      '',
+      `=== Finished: ${new Date().toISOString()} ===`,
+      `=== Exit Code: ${result.exitCode} ===`,
+    ].filter(Boolean).join('\n');
+    fs.appendFileSync(logFile, logContent);
+
+    return {
+      success: result.exitCode === 0,
+      exitCode: result.exitCode ?? 0,
+      logFile,
+      output: stdout,
+    };
+  } catch (err) {
+    const error = err as ExecaError;
+    const errStdout = typeof error.stdout === 'string' ? error.stdout : '';
+    const errStderr = typeof error.stderr === 'string' ? error.stderr : '';
+    const logContent = [
+      errStdout,
+      errStderr,
+      '',
+      `=== Finished: ${new Date().toISOString()} ===`,
+      `=== Exit Code: ${error.exitCode ?? 1} ===`,
+      `=== Error: ${error.message} ===`,
+    ].filter(Boolean).join('\n');
+    fs.appendFileSync(logFile, logContent);
+
+    return {
+      success: false,
+      exitCode: error.exitCode ?? 1,
+      logFile,
+      output: errStderr || error.message,
+    };
+  }
+}
+
+/**
+ * Run an agent pipeline job.
+ */
+async function runPipelineJob(
+  config: Config,
+  job: PipelineJob,
+  options: { detach?: boolean } = {}
+): Promise<JobRunResult> {
+  const logFile = prepareLogFile(config, job.id);
+  const authConfig = config.auth ?? DEFAULT_AUTH_CONFIG;
+
+  // Validate auth requirements
+  try {
+    validateAuthForJob(job, authConfig);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    fs.writeFileSync(logFile, [
+      `=== Job: ${job.id} ===`,
+      `=== Type: agent-pipeline ===`,
+      `=== Started: ${new Date().toISOString()} ===`,
+      `=== Error: Auth validation failed ===`,
+      errMsg,
+      '',
+      `=== Exit Code: 1 ===`,
+    ].join('\n'));
+
+    return {
+      success: false,
+      exitCode: 1,
+      logFile,
+      output: errMsg,
+    };
+  }
+
+  // Generate auth args
+  const authMode = resolveAuthMode(job, authConfig);
+  const authArgs = generateAuthArgs(authMode, authConfig, job.env);
+
+  // Build docker command arguments
+  const args: string[] = ['run', '--rm', `--name=oven-${job.id}`];
+
+  // Resource limits: default 2 CPU / 2g for pipeline jobs
+  const cpus = job.resources?.cpus ?? 2;
+  const memory = job.resources?.memory ?? '2g';
+  args.push(`--cpus=${cpus}`);
+  args.push(`--memory=${memory}`);
+
+  // Add auth volumes
+  for (const vol of authArgs.volumes) {
+    args.push('-v', vol);
+  }
+
+  // Add auth env vars
+  for (const [key, value] of Object.entries(authArgs.envVars)) {
+    args.push('-e', `${key}=${value}`);
+  }
+
+  // Add job env vars
+  if (job.env) {
+    for (const [key, value] of Object.entries(job.env)) {
+      // Skip auth env vars already added
+      if (key in authArgs.envVars) continue;
+      args.push('-e', `${key}=${value}`);
+    }
+  }
+
+  // Add image
+  args.push('agent-oven/pipeline-runner');
+
+  // Add entrypoint args: repo, branch, pipeline
+  args.push(job.source.repo);
+  args.push(job.source.branch ?? 'main');
+  args.push(job.pipeline);
+
+  // Timeout: default 30 minutes for pipeline jobs
+  const timeoutSeconds = job.resources?.timeout ?? 1800;
+
+  // Write log header
+  const logHeader = [
+    `=== Job: ${job.id} ===`,
+    `=== Type: agent-pipeline ===`,
+    `=== Pipeline: ${job.pipeline} ===`,
+    `=== Repo: ${job.source.repo} (${job.source.branch ?? 'main'}) ===`,
+    `=== Auth: ${authMode} ===`,
+    `=== Started: ${new Date().toISOString()} ===`,
+    `=== Command: docker ${args.join(' ')} ===`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(logFile, logHeader);
+
+  if (options.detach) {
+    const dockerArgs = [...args];
+    dockerArgs.splice(1, 0, '-d');
+
+    try {
+      await execa('docker', dockerArgs);
+      return {
+        success: true,
+        exitCode: 0,
+        logFile,
+        output: 'Pipeline job started in detached mode',
+      };
+    } catch (err) {
+      const error = err as ExecaError;
+      const errOutput = typeof error.stderr === 'string' ? error.stderr : error.message;
+      return {
+        success: false,
+        exitCode: error.exitCode ?? 1,
+        logFile,
+        output: errOutput,
+      };
+    }
+  }
+
+  // Run in foreground with timeout
+  try {
+    const result = await execa('docker', args, {
+      timeout: timeoutSeconds * 1000,
+      reject: false,
+    });
+
     const stdout = typeof result.stdout === 'string' ? result.stdout : '';
     const stderr = typeof result.stderr === 'string' ? result.stderr : '';
     const logContent = [

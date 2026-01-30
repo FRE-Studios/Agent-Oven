@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import type { Config, Job, JobLogEntry } from '../../core/types.js';
+import { isDockerJob, isPipelineJob } from '../../core/types.js';
 import { getJob, toggleJob, removeJob } from '../../core/jobs.js';
 import { runJob, getRecentExecutions, getJobLogFiles } from '../../core/docker.js';
 import { describeSchedule, getNextRun, formatRelativeTime } from '../../core/scheduler.js';
@@ -174,11 +175,28 @@ export function JobDetail({
 
       {/* Details */}
       <Box flexDirection="column" marginTop={1} borderStyle="single" paddingX={1}>
-        <DetailRow label="Image" value={job.image} />
-        <DetailRow
-          label="Command"
-          value={Array.isArray(job.command) ? job.command.join(' ') : job.command}
-        />
+        <DetailRow label="Type" value={job.type} />
+        {isDockerJob(job) && (
+          <>
+            <DetailRow label="Image" value={job.image} />
+            <DetailRow
+              label="Command"
+              value={Array.isArray(job.command) ? job.command.join(' ') : job.command}
+            />
+          </>
+        )}
+        {isPipelineJob(job) && (
+          <>
+            <DetailRow label="Pipeline" value={job.pipeline} />
+            <DetailRow label="Repo" value={job.source.repo} />
+            {job.source.branch && (
+              <DetailRow label="Branch" value={job.source.branch} />
+            )}
+            {job.auth && (
+              <DetailRow label="Auth" value={job.auth} />
+            )}
+          </>
+        )}
         <DetailRow label="Schedule" value={scheduleDesc} />
         {job.schedule.type === 'cron' && (
           <DetailRow label="Cron" value={job.schedule.cron} />
@@ -186,11 +204,14 @@ export function JobDetail({
         {nextRun && (
           <DetailRow label="Next run" value={formatRelativeTime(nextRun)} />
         )}
-        {job.timeout && (
+        {isDockerJob(job) && job.timeout && (
           <DetailRow label="Timeout" value={`${job.timeout} seconds`} />
         )}
-        {job.volumes && job.volumes.length > 0 && (
+        {isDockerJob(job) && job.volumes && job.volumes.length > 0 && (
           <DetailRow label="Volumes" value={job.volumes.join(', ')} />
+        )}
+        {job.resources?.timeout && (
+          <DetailRow label="Timeout" value={`${job.resources.timeout} seconds`} />
         )}
         {job.env && Object.keys(job.env).length > 0 && (
           <DetailRow label="Env vars" value={Object.keys(job.env).join(', ')} />
