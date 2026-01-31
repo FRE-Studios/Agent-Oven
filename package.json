@@ -4,15 +4,30 @@
   "description": "macOS-native job scheduler TUI for Docker containers",
   "type": "module",
   "main": "dist/cli.js",
+  "types": "dist/cli.d.ts",
   "bin": {
     "agent-oven": "./dist/cli.js"
   },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.d.ts.map",
+    "dist/**/*.js.map",
+    "!dist/**/*.test.*",
+    "!dist/__tests__",
+    "images/",
+    "scheduler.sh",
+    "README.md",
+    "LICENSE",
+    "CLAUDE.md"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "tsx src/cli.tsx",
     "dev": "tsx watch src/cli.tsx",
     "init": "tsx src/cli.tsx init",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "scheduler",
@@ -22,8 +37,23 @@
     "macos",
     "colima"
   ],
-  "author": "",
+  "author": "Fernando Rojas <fernando@fre-studios.com> (https://fre-studios.com/)",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FRE-Studios/Agent-Oven.git"
+  },
+  "homepage": "https://github.com/FRE-Studios/Agent-Oven#readme",
+  "bugs": {
+    "url": "https://github.com/FRE-Studios/Agent-Oven/issues"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/FRE-Studios"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "chalk": "^5.3.0",
     "execa": "^9.5.2",
