@@ -154,6 +154,11 @@ export function InitWizard() {
         if (cancelled) return;
         statuses[dep] = result === 'failed' ? 'failed' : 'done';
         setDepStatuses({ ...statuses });
+
+        if (result === 'failed') {
+          setError(`Failed to install ${dep} via Homebrew.`);
+          return;
+        }
       }
 
       setDepsDone(true);
@@ -386,7 +391,7 @@ export function InitWizard() {
         retry();
         return;
       }
-      if (input === 's') {
+      if (input === 's' && step !== 'dependencies' && step !== 'colima-config') {
         setError(null);
         advance();
         return;
@@ -425,6 +430,13 @@ export function InitWizard() {
           if (configField === 'cpu') setConfigField('memory');
           else if (configField === 'memory') setConfigField('disk');
         } else if (key.return && configField === 'disk') {
+          const cpuValue = parsePositiveInt(cpu);
+          const memoryValue = parsePositiveInt(memory);
+          const diskValue = parsePositiveInt(disk);
+          if (!cpuValue || !memoryValue || !diskValue) {
+            setError('Colima CPU, memory, and disk must be positive whole numbers.');
+            return;
+          }
           advance();
         }
         break;
@@ -448,6 +460,10 @@ export function InitWizard() {
         break;
 
       case 'image-select':
+        if (availableImages.length === 0) {
+          if (key.return) advance();
+          break;
+        }
         if (key.upArrow || input === 'k') {
           setImageCursor((c) => Math.max(0, c - 1));
         } else if (key.downArrow || input === 'j') {
@@ -561,11 +577,21 @@ export function InitWizard() {
       {error && step !== 'prerequisites' && step !== 'summary' && (
         <Box marginTop={1}>
           <Text color="red">Error: {error}</Text>
-          <Text dimColor>  [r] Retry  [s] Skip  [q] Quit</Text>
+          <Text dimColor>
+            {step === 'dependencies' || step === 'colima-config'
+              ? '  [r] Retry  [q] Quit'
+              : '  [r] Retry  [s] Skip  [q] Quit'}
+          </Text>
         </Box>
       )}
     </Box>
   );
+}
+
+function parsePositiveInt(value: string): number | null {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 // --- Step components ---
