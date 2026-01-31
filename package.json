@@ -11,6 +11,7 @@
     "build": "tsc",
     "start": "tsx src/cli.tsx",
     "dev": "tsx watch src/cli.tsx",
+    "init": "tsx src/cli.tsx init",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

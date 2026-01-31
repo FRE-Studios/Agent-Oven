@@ -5,14 +5,17 @@
 
 import React from 'react';
 import { render } from 'ink';
-import { App } from './tui/App.js';
-import { loadConfig } from './core/config.js';
 
-// Load configuration
-const config = loadConfig();
+const command = process.argv[2];
 
-// Render the TUI
-const { waitUntilExit } = render(<App config={config} />);
-
-// Wait for the app to exit
-await waitUntilExit();
+if (command === 'init') {
+  const { InitWizard } = await import('./tui/components/InitWizard.js');
+  const { waitUntilExit } = render(<InitWizard />);
+  await waitUntilExit();
+} else {
+  const { App } = await import('./tui/App.js');
+  const { loadConfig } = await import('./core/config.js');
+  const config = loadConfig();
+  const { waitUntilExit } = render(<App config={config} />);
+  await waitUntilExit();
+}
