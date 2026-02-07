@@ -214,20 +214,21 @@ run_docker_job() {
         docker_args+=("$command")
     fi
 
+    # Default timeout: 1 hour for docker jobs
+    local effective_timeout="${timeout:-3600}"
+    [ "$effective_timeout" = "null" ] && effective_timeout=3600
+
     # Execute with timeout
     log "Executing: docker ${docker_args[*]}"
     {
         echo "=== Job: $job_id ==="
         echo "=== Type: docker ==="
         echo "=== Started: $(date) ==="
+        echo "=== Timeout: ${effective_timeout}s ==="
         echo "=== Command: docker ${docker_args[*]} ==="
         echo ""
 
-        if [ -n "$timeout" ] && [ "$timeout" != "null" ]; then
-            timeout "${timeout}s" docker "${docker_args[@]}" 2>&1
-        else
-            docker "${docker_args[@]}" 2>&1
-        fi
+        timeout "${effective_timeout}s" docker "${docker_args[@]}" 2>&1
         local exit_code=$?
 
         echo ""
@@ -291,6 +292,7 @@ run_pipeline_job() {
 
     # Default timeout: 30 minutes for pipeline jobs
     local effective_timeout="${timeout:-1800}"
+    [ "$effective_timeout" = "null" ] && effective_timeout=1800
 
     # Execute with timeout
     log "Executing: docker ${docker_args[*]}"
@@ -300,14 +302,11 @@ run_pipeline_job() {
         echo "=== Pipeline: $pipeline ==="
         echo "=== Repo: $repo ($branch) ==="
         echo "=== Started: $(date) ==="
+        echo "=== Timeout: ${effective_timeout}s ==="
         echo "=== Command: docker ${docker_args[*]} ==="
         echo ""
 
-        if [ -n "$effective_timeout" ] && [ "$effective_timeout" != "null" ]; then
-            timeout "${effective_timeout}s" docker "${docker_args[@]}" 2>&1
-        else
-            docker "${docker_args[@]}" 2>&1
-        fi
+        timeout "${effective_timeout}s" docker "${docker_args[@]}" 2>&1
         local exit_code=$?
 
         echo ""
@@ -382,9 +381,68 @@ remove_job() {
     log "Removed completed one-time job: $job_id"
 }
 
+# Rotate scheduler log if it exceeds 10,000 lines
+rotate_scheduler_log() {
+    if [ -f "$SCHEDULER_LOG" ]; then
+        local line_count
+        line_count=$(wc -l < "$SCHEDULER_LOG" 2>/dev/null || echo 0)
+        if [ "$line_count" -gt 10000 ]; then
+            local tmp_file
+            tmp_file=$(mktemp) || return
+            tail -5000 "$SCHEDULER_LOG" > "$tmp_file"
+            mv "$tmp_file" "$SCHEDULER_LOG"
+            log "Rotated scheduler log (was $line_count lines)"
+        fi
+    fi
+}
+
+# Prune job logs older than 90 days
+prune_old_job_logs() {
+    local job_logs_dir="$LOG_DIR/jobs"
+    [ -d "$job_logs_dir" ] || return
+
+    local pruned=0
+    while IFS= read -r -d '' old_log; do
+        rm -f "$old_log"
+        pruned=$((pruned + 1))
+    done < <(find "$job_logs_dir" -name "*.log" -mtime +90 -print0 2>/dev/null)
+
+    [ "$pruned" -gt 0 ] && log "Pruned $pruned job log(s) older than 90 days"
+}
+
+# Prune Docker system resources (runs once per week)
+prune_docker() {
+    local marker="$LOG_DIR/.last_docker_prune"
+    local now
+    now=$(date +%s)
+
+    if [ -f "$marker" ]; then
+        local last_prune
+        last_prune=$(cat "$marker" 2>/dev/null || echo 0)
+        local age=$(( now - last_prune ))
+        # 604800 = 7 days in seconds
+        [ "$age" -lt 604800 ] && return
+    fi
+
+    log "Running weekly Docker system prune"
+    docker system prune -f --volumes 2>/dev/null || true
+    echo "$now" > "$marker"
+}
+
+# Check if a job's container is already running
+is_job_running() {
+    local job_id="$1"
+    docker inspect --format='{{.State.Running}}' "oven-${job_id}" 2>/dev/null | grep -q "true"
+}
+
 # Main scheduler logic
 main() {
     log "Scheduler run started"
+
+    # Housekeeping
+    rotate_scheduler_log
+    prune_old_job_logs
+    prune_docker
 
     # Check jobs file exists
     if [ ! -f "$JOBS_FILE" ]; then
@@ -437,6 +495,12 @@ main() {
         esac
 
         if [ "$should_run" = "true" ]; then
+            # Skip if this job's container is already running
+            if is_job_running "$job_id"; then
+                log "Skipping job $job_id: container oven-${job_id} is still running"
+                continue
+            fi
+
             run_job "$job_id" "$job"
             update_last_run "$job_id"
 
