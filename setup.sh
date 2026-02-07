@@ -41,10 +41,14 @@ fi
 
 # Install dependencies
 echo "Installing dependencies..."
-brew install colima docker jq 2>/dev/null || {
+brew install colima docker docker-buildx jq 2>/dev/null || {
     echo "Updating existing installations..."
-    brew upgrade colima docker jq 2>/dev/null || true
+    brew upgrade colima docker docker-buildx jq 2>/dev/null || true
 }
+
+# Set up buildx as the default Docker builder
+mkdir -p "$HOME/.docker/cli-plugins"
+ln -sfn "$(brew --prefix)/opt/docker-buildx/bin/docker-buildx" "$HOME/.docker/cli-plugins/docker-buildx"
 
 # Start Colima if not running
 echo ""
