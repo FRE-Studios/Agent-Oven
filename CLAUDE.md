@@ -76,6 +76,9 @@ agent-oven/
 # Run the interactive TUI
 npm start
 
+# Run the interactive setup 
+npm run init
+
 # Development mode with hot reload
 npm run dev
 
