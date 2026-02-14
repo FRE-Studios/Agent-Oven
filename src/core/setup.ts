@@ -189,9 +189,39 @@ export function detectTimezone(): string {
 }
 
 /**
+ * Resolve the command array for the launchd plist ProgramArguments.
+ *
+ * Strategy:
+ *  1. Try `which agent-oven` — works for global npm installs / linked binaries.
+ *  2. Fallback: use the current Node binary + the compiled CLI entry point
+ *     (dist/cli.js relative to the project dir). Works for local dev.
+ */
+export async function resolveSchedulerCommand(projectDir: string): Promise<string[]> {
+  // Try global binary first
+  try {
+    const { stdout } = await execa('which', ['agent-oven']);
+    const binPath = stdout.trim();
+    if (binPath && fs.existsSync(binPath)) {
+      return [binPath, 'scheduler-tick'];
+    }
+  } catch {
+    // not found on PATH — fall through
+  }
+
+  // Fallback: node + dist/cli.js
+  const cliJs = path.resolve(projectDir, 'dist', 'cli.js');
+  return [process.execPath, cliJs, 'scheduler-tick'];
+}
+
+/**
  * Generate launchd plist XML content
  */
-export function generatePlistContent(projectDir: string): string {
+export async function generatePlistContent(projectDir: string): Promise<string> {
+  const cmdArgs = await resolveSchedulerCommand(projectDir);
+  const programArgs = cmdArgs
+    .map((arg) => `        <string>${arg}</string>`)
+    .join('\n');
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -201,7 +231,7 @@ export function generatePlistContent(projectDir: string): string {
 
     <key>ProgramArguments</key>
     <array>
-        <string>${projectDir}/scheduler.sh</string>
+${programArgs}
     </array>
 
     <key>StartInterval</key>
@@ -240,7 +270,7 @@ export async function installLaunchd(projectDir: string): Promise<{ success: boo
     }
 
     // Write plist
-    const content = generatePlistContent(projectDir);
+    const content = await generatePlistContent(projectDir);
     fs.writeFileSync(plistPath, content);
 
     // Unload if already loaded (ignore errors)

@@ -32,6 +32,7 @@ if (process.argv.length <= 2) {
     () => import('./cli/commands/daemon.js'),
     () => import('./cli/commands/up.js'),
     () => import('./cli/commands/down.js'),
+    () => import('./cli/commands/scheduler-tick.js'),
   ];
 
   for (const load of commandModules) {

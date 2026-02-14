@@ -1,5 +1,9 @@
 #!/bin/bash
-# Agent-Oven Scheduler Daemon
+# DEPRECATED: This bash scheduler is kept for reference only.
+# New installs use `agent-oven scheduler-tick` (TypeScript).
+# See src/core/scheduler-runner.ts for the current implementation.
+#
+# Agent-Oven Scheduler Daemon (legacy)
 # Runs periodically via launchd to check and execute scheduled jobs
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
