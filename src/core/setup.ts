@@ -7,6 +7,7 @@ import { execa } from 'execa';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { getColimaStatus, startColima, isDockerAvailable } from './docker.js';
 import { saveConfig, getLaunchdPlistPath } from './config.js';
 import type { Config } from './types.js';
@@ -192,25 +193,52 @@ export function detectTimezone(): string {
  * Resolve the command array for the launchd plist ProgramArguments.
  *
  * Strategy:
- *  1. Try `which agent-oven` — works for global npm installs / linked binaries.
- *  2. Fallback: use the current Node binary + the compiled CLI entry point
- *     (dist/cli.js relative to the project dir). Works for local dev.
+ *  1. Pin to the currently-running CLI process where possible.
+ *  2. Fallback to project-local dist/cli.js (for built source checkouts).
+ *  3. Fallback to package-local dist/cli.js (for npm global installs).
+ *  4. Final fallback: legacy scheduler.sh for unbuilt source checkouts.
  */
 export async function resolveSchedulerCommand(projectDir: string): Promise<string[]> {
-  // Try global binary first
-  try {
-    const { stdout } = await execa('which', ['agent-oven']);
-    const binPath = stdout.trim();
-    if (binPath && fs.existsSync(binPath)) {
-      return [binPath, 'scheduler-tick'];
+  // 1) Pin to the current CLI invocation path when possible.
+  const argv1 = process.argv[1];
+  if (argv1) {
+    const invokedPath = path.isAbsolute(argv1) ? argv1 : path.resolve(process.cwd(), argv1);
+    if (fs.existsSync(invokedPath)) {
+      const ext = path.extname(invokedPath).toLowerCase();
+      if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {
+        return [process.execPath, invokedPath, 'scheduler-tick'];
+      }
     }
-  } catch {
-    // not found on PATH — fall through
   }
 
-  // Fallback: node + dist/cli.js
-  const cliJs = path.resolve(projectDir, 'dist', 'cli.js');
-  return [process.execPath, cliJs, 'scheduler-tick'];
+  // 2) Project-local build output.
+  const projectCliJs = path.resolve(projectDir, 'dist', 'cli.js');
+  if (fs.existsSync(projectCliJs)) {
+    return [process.execPath, projectCliJs, 'scheduler-tick'];
+  }
+
+  // 3) Package-local build output (works for npm/global installs).
+  const packageCliJs = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'cli.js');
+  if (fs.existsSync(packageCliJs)) {
+    return [process.execPath, packageCliJs, 'scheduler-tick'];
+  }
+
+  // 4) Legacy fallback for source checkouts not yet built.
+  const legacyScheduler = path.resolve(projectDir, 'scheduler.sh');
+  if (fs.existsSync(legacyScheduler)) {
+    return [legacyScheduler];
+  }
+
+  throw new Error(
+    `Unable to resolve scheduler command. Looked for ${projectCliJs}, ${packageCliJs}, and ${legacyScheduler}.`
+  );
+}
+
+function escapePlistString(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 /**
@@ -219,8 +247,9 @@ export async function resolveSchedulerCommand(projectDir: string): Promise<strin
 export async function generatePlistContent(projectDir: string): Promise<string> {
   const cmdArgs = await resolveSchedulerCommand(projectDir);
   const programArgs = cmdArgs
-    .map((arg) => `        <string>${arg}</string>`)
+    .map((arg) => `        <string>${escapePlistString(arg)}</string>`)
     .join('\n');
+  const schedulerLogPath = escapePlistString(path.join(projectDir, 'logs', 'scheduler.log'));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -241,10 +270,10 @@ ${programArgs}
     <true/>
 
     <key>StandardOutPath</key>
-    <string>${projectDir}/logs/scheduler.log</string>
+    <string>${schedulerLogPath}</string>
 
     <key>StandardErrorPath</key>
-    <string>${projectDir}/logs/scheduler.log</string>
+    <string>${schedulerLogPath}</string>
 
     <key>EnvironmentVariables</key>
     <dict>

@@ -13,8 +13,14 @@ export function register(program: Command): void {
     .command('scheduler-tick', { hidden: true })
     .description('Run one scheduler cycle (called by launchd)')
     .action(async () => {
-      const config = loadConfig();
-      const exitCode = await runSchedulerTick(config);
-      process.exit(exitCode);
+      try {
+        const config = loadConfig();
+        const exitCode = await runSchedulerTick(config);
+        process.exit(exitCode);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Scheduler tick failed: ${message}`);
+        process.exit(1);
+      }
     });
 }

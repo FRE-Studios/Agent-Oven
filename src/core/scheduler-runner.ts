@@ -42,8 +42,13 @@ function rotateSchedulerLog(config: Config): void {
   const lines = content.split('\n');
   if (lines.length > 10_000) {
     const trimmed = lines.slice(-5_000).join('\n');
-    fs.writeFileSync(logPath, trimmed);
-    log(`Rotated scheduler log (was ${lines.length} lines)`);
+    try {
+      fs.writeFileSync(logPath, trimmed);
+      log(`Rotated scheduler log (was ${lines.length} lines)`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`WARN: Failed to rotate scheduler log: ${msg}`);
+    }
   }
 }
 
@@ -90,14 +95,23 @@ function pruneOldJobLogs(config: Config): void {
  * Weekly `docker system prune -f --volumes` tracked via marker file.
  */
 async function pruneDockerResources(config: Config): Promise<void> {
-  const marker = path.join(getLogsDir(config), '.last_docker_prune');
+  const logsDir = getLogsDir(config);
+  const marker = path.join(logsDir, '.last_docker_prune');
   const now = Math.floor(Date.now() / 1000);
   const oneWeek = 604_800; // 7 days in seconds
+
+  try {
+    fs.mkdirSync(logsDir, { recursive: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`WARN: Failed to prepare logs directory for prune marker: ${msg}`);
+    return;
+  }
 
   if (fs.existsSync(marker)) {
     try {
       const lastPrune = parseInt(fs.readFileSync(marker, 'utf-8').trim(), 10);
-      if (now - lastPrune < oneWeek) return;
+      if (Number.isFinite(lastPrune) && now - lastPrune < oneWeek) return;
     } catch {
       // if marker is unreadable, proceed with prune
     }
@@ -109,7 +123,12 @@ async function pruneDockerResources(config: Config): Promise<void> {
   } catch {
     // prune failure is non-fatal
   }
-  fs.writeFileSync(marker, String(now));
+  try {
+    fs.writeFileSync(marker, String(now));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`WARN: Failed to write docker prune marker: ${msg}`);
+  }
 }
 
 /**
@@ -149,9 +168,24 @@ export async function runSchedulerTick(config: Config): Promise<number> {
   log('Scheduler run started');
 
   // --- Housekeeping ---
-  rotateSchedulerLog(config);
-  pruneOldJobLogs(config);
-  await pruneDockerResources(config);
+  try {
+    rotateSchedulerLog(config);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`WARN: Scheduler log rotation failed: ${msg}`);
+  }
+  try {
+    pruneOldJobLogs(config);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`WARN: Job log pruning failed: ${msg}`);
+  }
+  try {
+    await pruneDockerResources(config);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`WARN: Docker prune failed: ${msg}`);
+  }
 
   // --- Load jobs ---
   const jobs = listJobs(config);
