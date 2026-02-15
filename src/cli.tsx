@@ -5,7 +5,11 @@
  * Routes to commander subcommands, TUI, or init wizard.
  */
 
+import { createRequire } from 'node:module';
 import { Command } from 'commander';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 
 // If no arguments, skip commander entirely and launch TUI directly
 if (process.argv.length <= 2) {
@@ -17,7 +21,7 @@ if (process.argv.length <= 2) {
   program
     .name('agent-oven')
     .description('macOS-native job scheduler for Docker containers')
-    .version('0.1.0');
+    .version(version);
 
   // Register all CLI commands
   const commandModules = [
