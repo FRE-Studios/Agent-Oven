@@ -1,6 +1,50 @@
 # Agent Oven
 
+[![npm version](https://img.shields.io/npm/v/agent-oven.svg)](https://www.npmjs.com/package/agent-oven)
+[![license](https://img.shields.io/npm/l/agent-oven.svg)](https://github.com/FRE-Studios/Agent-Oven/blob/main/LICENSE)
+
 macOS-native job scheduler that runs Docker containers on a schedule using Colima, with an interactive terminal UI for job management.
+
+## Install
+
+```bash
+npm install -g agent-oven
+```
+
+Then run the interactive setup wizard and launch the TUI:
+
+```bash
+agent-oven init    # one-time setup (installs Colima, Docker, builds images, configures launchd)
+agent-oven         # launch the TUI
+```
+
+### CLI Commands
+
+```bash
+agent-oven                 # launch TUI
+agent-oven list            # list all jobs
+agent-oven show <id>       # show job details
+agent-oven add             # add a new job (interactive)
+agent-oven run <id>        # run a job immediately
+agent-oven toggle <id>     # enable/disable a job
+agent-oven delete <id>     # delete a job
+agent-oven logs [id]       # view logs (scheduler or job-specific)
+agent-oven status          # system status (Colima, Docker, daemon)
+agent-oven up              # start Colima VM
+agent-oven down            # stop Colima VM
+agent-oven daemon install  # install/reinstall launchd daemon
+agent-oven daemon remove   # remove launchd daemon
+```
+
+### From Source
+
+```bash
+git clone https://github.com/FRE-Studios/Agent-Oven.git
+cd Agent-Oven
+npm install
+npm run init   # interactive setup wizard
+npm start      # launch the TUI
+```
 
 ## Architecture
 
@@ -37,16 +81,6 @@ macOS-native job scheduler that runs Docker containers on a schedule using Colim
 - macOS
 - [Homebrew](https://brew.sh)
 - Node.js >= 18
-
-## Quick Start
-
-```bash
-git clone https://github.com/FRE-Studios/Agent-Oven.git
-cd Agent-Oven
-npm install
-npm run init   # interactive setup wizard
-npm start      # launch the TUI
-```
 
 ## Setup (Init Wizard)
 
@@ -403,6 +437,10 @@ agent-oven/
 ├── package.json
 └── tsconfig.json
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

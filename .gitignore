@@ -70,5 +70,5 @@ temp/
 .cache/
 
 # Agent Oven specific
-# Keep jobs.json tracked but ignore local overrides
-# jobs.local.json
+# User job definitions may contain API keys in env fields
+jobs.json
