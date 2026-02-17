@@ -3,8 +3,18 @@
   "version": "0.1.0",
   "description": "macOS-native job scheduler TUI for Docker containers",
   "type": "module",
-  "main": "dist/cli.js",
-  "types": "dist/cli.d.ts",
+  "main": "dist/core/index.js",
+  "types": "dist/core/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui/index.d.ts",
+      "import": "./dist/tui/index.js"
+    }
+  },
   "bin": {
     "agent-oven": "./dist/cli.js"
   },
