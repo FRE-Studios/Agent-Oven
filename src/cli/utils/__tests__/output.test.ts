@@ -1,4 +1,4 @@
-import { formatDuration } from '../output.js';
+import { formatDuration, statusIcon } from '../output.js';
 
 describe('formatDuration', () => {
   it('formats 0 seconds', () => {
@@ -40,5 +40,35 @@ describe('formatDuration', () => {
   it('formats hours with remaining minutes but no seconds shown', () => {
     // 1h 30m = 5400s, seconds within the hour are dropped
     expect(formatDuration(5400)).toBe('1h 30m');
+  });
+
+  it('formats 59 seconds (boundary before minutes)', () => {
+    expect(formatDuration(59)).toBe('59s');
+  });
+
+  it('formats 3599 seconds (boundary before hours)', () => {
+    expect(formatDuration(3599)).toBe('59m 59s');
+  });
+
+  it('formats very large durations', () => {
+    // 359999s = 99h 59m 59s → displayed as 99h 59m
+    expect(formatDuration(359999)).toBe('99h 59m');
+  });
+});
+
+// ─── statusIcon ─────────────────────────────────────────────
+
+describe('statusIcon', () => {
+  it('returns a string containing check mark when ok is true', () => {
+    expect(statusIcon(true)).toContain('✓');
+  });
+
+  it('returns a string containing cross mark when ok is false', () => {
+    expect(statusIcon(false)).toContain('✗');
+  });
+
+  it('returns a string (not undefined or null)', () => {
+    expect(typeof statusIcon(true)).toBe('string');
+    expect(typeof statusIcon(false)).toBe('string');
   });
 });

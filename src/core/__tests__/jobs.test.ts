@@ -1,5 +1,21 @@
-import { validateJob, getBuiltInImages } from '../jobs.js';
-import type { DockerJob, PipelineJob } from '../types.js';
+import { vi } from 'vitest';
+vi.mock('node:fs');
+import * as fs from 'node:fs';
+
+import {
+  validateJob,
+  getBuiltInImages,
+  listJobs,
+  getJob,
+  addJob,
+  updateJob,
+  removeJob,
+  toggleJob,
+  updateLastRun,
+  getJobStats,
+} from '../jobs.js';
+import type { Job, DockerJob, PipelineJob, AddJobOptions } from '../types.js';
+import { makeConfig, makeDockerJob, makePipelineJob } from './fixtures.js';
 
 // ─── validateJob ────────────────────────────────────────────
 
@@ -193,5 +209,240 @@ describe('getBuiltInImages', () => {
 
   it('returns exactly 4 images', () => {
     expect(getBuiltInImages()).toHaveLength(4);
+  });
+});
+
+// ─── CRUD Helpers ─────────────────────────────────────────────
+
+const config = makeConfig();
+
+function mockJobsFile(jobs: Job[]): void {
+  vi.mocked(fs.existsSync).mockReturnValue(true);
+  vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ jobs }));
+}
+
+// ─── listJobs ─────────────────────────────────────────────────
+
+describe('listJobs', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('returns parsed job array when file exists', () => {
+    const job = makeDockerJob();
+    mockJobsFile([job]);
+    expect(listJobs(config)).toEqual([job]);
+  });
+
+  it('returns [] when file does not exist', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    expect(listJobs(config)).toEqual([]);
+  });
+
+  it('returns [] on readFileSync error', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('EACCES'); });
+    expect(listJobs(config)).toEqual([]);
+  });
+
+  it('returns [] on corrupt JSON', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue('not valid json');
+    expect(listJobs(config)).toEqual([]);
+  });
+
+  it('normalizes legacy jobs without type field to docker', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+      jobs: [{ id: 'legacy', name: 'Legacy', image: 'alpine', command: ['echo'], schedule: { type: 'cron', cron: '0 * * * *' } }],
+    }));
+    const jobs = listJobs(config);
+    expect(jobs[0]!.type).toBe('docker');
+  });
+
+  it('returns [] when jobs key is missing', () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ notJobs: [] }));
+    expect(listJobs(config)).toEqual([]);
+  });
+});
+
+// ─── getJob ───────────────────────────────────────────────────
+
+describe('getJob', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('returns matching job when found', () => {
+    const job = makeDockerJob({ id: 'find-me' });
+    mockJobsFile([makeDockerJob({ id: 'other' }), job]);
+    expect(getJob(config, 'find-me')).toEqual(job);
+  });
+
+  it('returns null when not found', () => {
+    mockJobsFile([makeDockerJob()]);
+    expect(getJob(config, 'nonexistent')).toBeNull();
+  });
+});
+
+// ─── addJob ───────────────────────────────────────────────────
+
+describe('addJob', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('adds valid docker job and returns it with last_run: null', () => {
+    mockJobsFile([]);
+    const result = addJob(config, makeDockerJob({ id: 'new-job' }) as AddJobOptions);
+    expect(result.id).toBe('new-job');
+    expect(result.last_run).toBeNull();
+    const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0]![1] as string);
+    expect(written.jobs).toHaveLength(1);
+    expect(written.jobs[0].id).toBe('new-job');
+  });
+
+  it('adds valid pipeline job', () => {
+    mockJobsFile([]);
+    const result = addJob(config, makePipelineJob({ id: 'new-pipeline' }) as AddJobOptions);
+    expect(result.id).toBe('new-pipeline');
+    expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledOnce();
+  });
+
+  it('throws "already exists" for duplicate ID', () => {
+    mockJobsFile([makeDockerJob({ id: 'dup' })]);
+    expect(() => addJob(config, makeDockerJob({ id: 'dup' }) as AddJobOptions)).toThrow('already exists');
+    expect(vi.mocked(fs.writeFileSync)).not.toHaveBeenCalled();
+  });
+
+  it('throws "Missing required fields" when schedule missing', () => {
+    mockJobsFile([]);
+    const opts = { type: 'docker' as const, id: 'no-sched', name: 'No Schedule', image: 'alpine', command: ['echo'] };
+    expect(() => addJob(config, opts as any)).toThrow('Missing required fields');
+  });
+
+  it('throws ID format error for invalid chars', () => {
+    mockJobsFile([]);
+    expect(() => addJob(config, makeDockerJob({ id: 'bad id!' }) as AddJobOptions)).toThrow('letters, numbers, hyphens');
+  });
+
+  it('throws "Docker jobs require: image, command" when image missing', () => {
+    mockJobsFile([]);
+    const opts = { type: 'docker' as const, id: 'no-img', name: 'No Image', command: ['echo'], schedule: { type: 'cron' as const, cron: '0 * * * *' } };
+    expect(() => addJob(config, opts as any)).toThrow('Docker jobs require: image, command');
+  });
+
+  it('throws "Pipeline jobs require: source, pipeline" when source missing', () => {
+    mockJobsFile([]);
+    const opts = { type: 'agent-pipeline' as const, id: 'no-src', name: 'No Source', pipeline: 'main', schedule: { type: 'cron' as const, cron: '0 * * * *' } };
+    expect(() => addJob(config, opts as any)).toThrow('Pipeline jobs require: source, pipeline');
+  });
+});
+
+// ─── updateJob ────────────────────────────────────────────────
+
+describe('updateJob', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('merges updates, preserves other fields, and writes', () => {
+    const job = makeDockerJob({ id: 'upd', name: 'Original' });
+    mockJobsFile([job]);
+    const result = updateJob(config, 'upd', { name: 'Updated' });
+    expect(result.name).toBe('Updated');
+    expect(result.id).toBe('upd');
+    const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0]![1] as string);
+    expect(written.jobs[0].name).toBe('Updated');
+    expect(written.jobs[0].image).toBe('alpine');
+  });
+
+  it('throws "not found" for nonexistent job', () => {
+    mockJobsFile([]);
+    expect(() => updateJob(config, 'ghost', { name: 'Nope' })).toThrow('not found');
+  });
+});
+
+// ─── removeJob ────────────────────────────────────────────────
+
+describe('removeJob', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('removes correct job and writes shorter array', () => {
+    mockJobsFile([makeDockerJob({ id: 'keep' }), makeDockerJob({ id: 'remove-me' })]);
+    removeJob(config, 'remove-me');
+    const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0]![1] as string);
+    expect(written.jobs).toHaveLength(1);
+    expect(written.jobs[0].id).toBe('keep');
+  });
+
+  it('throws "not found" for nonexistent job', () => {
+    mockJobsFile([]);
+    expect(() => removeJob(config, 'ghost')).toThrow('not found');
+  });
+});
+
+// ─── toggleJob ────────────────────────────────────────────────
+
+describe('toggleJob', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('toggles enabled → disabled', () => {
+    mockJobsFile([makeDockerJob({ id: 'tog', enabled: true })]);
+    const result = toggleJob(config, 'tog');
+    expect(result.enabled).toBe(false);
+  });
+
+  it('toggles disabled → enabled', () => {
+    mockJobsFile([makeDockerJob({ id: 'tog', enabled: false })]);
+    const result = toggleJob(config, 'tog');
+    expect(result.enabled).toBe(true);
+  });
+
+  it('toggles implicit enabled (undefined) → disabled', () => {
+    const job = makeDockerJob({ id: 'tog' });
+    delete (job as any).enabled;
+    mockJobsFile([job]);
+    const result = toggleJob(config, 'tog');
+    expect(result.enabled).toBe(false);
+  });
+});
+
+// ─── updateLastRun ────────────────────────────────────────────
+
+describe('updateLastRun', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('uses provided timestamp verbatim', () => {
+    mockJobsFile([makeDockerJob({ id: 'lr' })]);
+    const result = updateLastRun(config, 'lr', '2025-01-15T12:00:00');
+    expect(result.last_run).toBe('2025-01-15T12:00:00');
+  });
+
+  it('generates ISO timestamp without ms when no timestamp given', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T10:30:00.000Z'));
+    mockJobsFile([makeDockerJob({ id: 'lr' })]);
+    const result = updateLastRun(config, 'lr');
+    expect(result.last_run).toBe('2025-06-15T10:30:00');
+  });
+});
+
+// ─── getJobStats ──────────────────────────────────────────────
+
+describe('getJobStats', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('returns all zeros for empty list', () => {
+    mockJobsFile([]);
+    expect(getJobStats(config)).toEqual({ total: 0, enabled: 0, cron: 0, oncePending: 0 });
+  });
+
+  it('counts mixed jobs correctly', () => {
+    mockJobsFile([
+      makeDockerJob({ id: 'j1', enabled: true, schedule: { type: 'cron', cron: '0 * * * *' } }),
+      makeDockerJob({ id: 'j2', enabled: false, schedule: { type: 'cron', cron: '0 * * * *' } }),
+      makeDockerJob({ id: 'j3', schedule: { type: 'once', datetime: '2025-12-25T10:00:00' }, last_run: null }),
+      makeDockerJob({ id: 'j4', schedule: { type: 'once', datetime: '2025-12-26T10:00:00' }, last_run: '2025-12-26T10:00:00' }),
+    ]);
+    const stats = getJobStats(config);
+    expect(stats.total).toBe(4);
+    expect(stats.enabled).toBe(3); // j1, j3, j4 (enabled !== false)
+    expect(stats.cron).toBe(2);    // j1, j2
+    expect(stats.oncePending).toBe(1); // j3 (once + no last_run)
   });
 });
