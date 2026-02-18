@@ -8,91 +8,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { getColimaStatus, startColima, isDockerAvailable } from './docker.js';
-import { saveConfig, getLaunchdPlistPath } from './config.js';
+import { isDockerAvailable } from './docker.js';
+import { saveConfig } from './config.js';
 import type { Config } from './types.js';
 
-export { getColimaStatus, startColima, isDockerAvailable };
-
-export interface DependencyStatus {
-  installed: boolean;
-  version?: string;
-}
-
-/**
- * Check if Homebrew is installed
- */
-export async function checkHomebrew(): Promise<DependencyStatus> {
-  try {
-    const { stdout } = await execa('brew', ['--version']);
-    const version = stdout.split('\n')[0]?.replace('Homebrew ', '').trim();
-    return { installed: true, version };
-  } catch {
-    return { installed: false };
-  }
-}
-
-/**
- * Check if a command-line dependency exists
- */
-export async function checkDependency(name: string): Promise<DependencyStatus> {
-  try {
-    await execa('command', ['-v', name], { shell: true });
-
-    // Try to get version
-    let version: string | undefined;
-    try {
-      const { stdout } = await execa(name, ['--version'], { reject: false });
-      version = stdout.split('\n')[0]?.trim();
-    } catch {
-      // Some commands don't have --version
-    }
-
-    return { installed: true, version };
-  } catch {
-    return { installed: false };
-  }
-}
-
-/**
- * Install a package via Homebrew
- */
-export async function brewInstall(
-  pkg: string,
-  onOutput?: (line: string) => void,
-): Promise<'installed' | 'already-installed' | 'failed'> {
-  try {
-    // Check if already installed
-    const check = await execa('brew', ['list', pkg], { reject: false });
-    if (check.exitCode === 0) {
-      return 'already-installed';
-    }
-
-    const proc = execa('brew', ['install', pkg]);
-
-    if (onOutput && proc.stdout) {
-      proc.stdout.on('data', (data: Buffer) => {
-        const lines = data.toString().split('\n').filter(Boolean);
-        for (const line of lines) {
-          onOutput(line);
-        }
-      });
-    }
-    if (onOutput && proc.stderr) {
-      proc.stderr.on('data', (data: Buffer) => {
-        const lines = data.toString().split('\n').filter(Boolean);
-        for (const line of lines) {
-          onOutput(line);
-        }
-      });
-    }
-
-    await proc;
-    return 'installed';
-  } catch {
-    return 'failed';
-  }
-}
+export { isDockerAvailable };
 
 /**
  * Create required directories and files
@@ -190,7 +110,7 @@ export function detectTimezone(): string {
 }
 
 /**
- * Resolve the command array for the launchd plist ProgramArguments.
+ * Resolve the command array for the daemon config (plist/systemd ExecStart).
  *
  * Strategy:
  *  1. Pin to the currently-running CLI process where possible.
@@ -232,87 +152,6 @@ export async function resolveSchedulerCommand(projectDir: string): Promise<strin
   throw new Error(
     `Unable to resolve scheduler command. Looked for ${projectCliJs}, ${packageCliJs}, and ${legacyScheduler}.`
   );
-}
-
-function escapePlistString(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/**
- * Generate launchd plist XML content
- */
-export async function generatePlistContent(projectDir: string): Promise<string> {
-  const cmdArgs = await resolveSchedulerCommand(projectDir);
-  const programArgs = cmdArgs
-    .map((arg) => `        <string>${escapePlistString(arg)}</string>`)
-    .join('\n');
-  const schedulerLogPath = escapePlistString(path.join(projectDir, 'logs', 'scheduler.log'));
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.agent-oven.scheduler</string>
-
-    <key>ProgramArguments</key>
-    <array>
-${programArgs}
-    </array>
-
-    <key>StartInterval</key>
-    <integer>60</integer>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>StandardOutPath</key>
-    <string>${schedulerLogPath}</string>
-
-    <key>StandardErrorPath</key>
-    <string>${schedulerLogPath}</string>
-
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    </dict>
-</dict>
-</plist>
-`;
-}
-
-/**
- * Install the launchd agent
- */
-export async function installLaunchd(projectDir: string): Promise<{ success: boolean; error?: string }> {
-  const plistPath = getLaunchdPlistPath();
-  const plistDir = path.dirname(plistPath);
-
-  try {
-    // Ensure LaunchAgents directory exists
-    if (!fs.existsSync(plistDir)) {
-      fs.mkdirSync(plistDir, { recursive: true });
-    }
-
-    // Write plist
-    const content = await generatePlistContent(projectDir);
-    fs.writeFileSync(plistPath, content);
-
-    // Unload if already loaded (ignore errors)
-    await execa('launchctl', ['unload', plistPath], { reject: false });
-
-    // Load the agent
-    await execa('launchctl', ['load', plistPath]);
-
-    return { success: true };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: message };
-  }
 }
 
 /**

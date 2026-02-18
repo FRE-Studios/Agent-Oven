@@ -5,6 +5,7 @@
 import type { Command } from 'commander';
 import { requireConfig, handleError } from '../utils/errors.js';
 import { statusIcon } from '../utils/output.js';
+import { platform } from '../../core/platform.js';
 
 export function register(program: Command): void {
   program
@@ -22,19 +23,21 @@ export function register(program: Command): void {
           return;
         }
 
+        const runtimeLabel = platform.needsVM ? 'Colima' : 'Docker';
+
         console.log('\nAgent Oven Status');
 
-        // Colima
-        const colima = status.colima;
-        if (colima.running) {
+        // Runtime
+        const runtime = status.runtime;
+        if (runtime.running) {
           const specs = [
-            colima.cpu ? `${colima.cpu} CPU` : null,
-            colima.memory ? `${colima.memory}GB RAM` : null,
-            colima.disk ? `${colima.disk}GB disk` : null,
+            runtime.cpu ? `${runtime.cpu} CPU` : null,
+            runtime.memory ? `${runtime.memory}GB RAM` : null,
+            runtime.disk ? `${runtime.disk}GB disk` : null,
           ].filter(Boolean).join(', ');
-          console.log(`  Colima:       ${statusIcon(true)} Running${specs ? ` (${specs})` : ''}`);
+          console.log(`  ${runtimeLabel.padEnd(12)} ${statusIcon(true)} Running${specs ? ` (${specs})` : ''}`);
         } else {
-          console.log(`  Colima:       ${statusIcon(false)} Stopped`);
+          console.log(`  ${runtimeLabel.padEnd(12)} ${statusIcon(false)} Stopped`);
         }
 
         // Scheduler

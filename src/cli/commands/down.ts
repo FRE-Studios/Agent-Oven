@@ -1,19 +1,18 @@
 /**
- * `agent-oven down` — Stop daemon + Colima
+ * `agent-oven down` — Stop daemon + runtime
  */
 
-import { execa } from 'execa';
 import type { Command } from 'commander';
 import { handleError } from '../utils/errors.js';
-import { getLaunchdPlistPath } from '../../core/config.js';
-import { getRunningContainers, stopColima, getSchedulerStatus } from '../../core/docker.js';
+import { platform } from '../../core/platform.js';
+import { getRunningContainers } from '../../core/docker.js';
 import { success, warn, info } from '../utils/output.js';
 import { confirm } from '../utils/prompts.js';
 
 export function register(program: Command): void {
   program
     .command('down')
-    .description('Stop the scheduler daemon and Colima')
+    .description('Stop the scheduler daemon and container runtime')
     .option('--force', 'Skip warning about running containers')
     .action(async (opts: { force?: boolean }) => {
       try {
@@ -34,19 +33,20 @@ export function register(program: Command): void {
         }
 
         // Step 1: Unload daemon
-        const plistPath = getLaunchdPlistPath();
-        const sched = await getSchedulerStatus();
+        const sched = await platform.getSchedulerStatus();
         if (sched.loaded) {
-          await execa('launchctl', ['unload', plistPath]);
+          await platform.stopDaemon();
           success('Scheduler daemon stopped');
         } else {
           info('Scheduler daemon was not loaded');
         }
 
-        // Step 2: Stop Colima
-        info('Stopping Colima...');
-        await stopColima();
-        success('Colima stopped');
+        // Step 2: Stop runtime (only meaningful on macOS with Colima)
+        if (platform.needsVM) {
+          info('Stopping Colima...');
+          await platform.stopRuntime();
+          success('Colima stopped');
+        }
 
         success('System is down');
       } catch (err) {

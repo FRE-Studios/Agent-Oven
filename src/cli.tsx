@@ -20,7 +20,7 @@ if (process.argv.length <= 2) {
 
   program
     .name('agent-oven')
-    .description('macOS-native job scheduler for Docker containers')
+    .description('Job scheduler for Docker containers (macOS and Linux)')
     .version(version);
 
   // Register all CLI commands

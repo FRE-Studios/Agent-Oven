@@ -1,7 +1,7 @@
 {
   "name": "agent-oven",
   "version": "0.1.0",
-  "description": "Job scheduler TUI for Docker containers (macOS and Linux)",
+  "description": "macOS-native job scheduler TUI for Docker containers",
   "type": "module",
   "main": "dist/core/index.js",
   "types": "dist/core/index.d.ts",
@@ -48,9 +48,7 @@
     "tui",
     "cli",
     "macos",
-    "linux",
-    "colima",
-    "systemd"
+    "colima"
   ],
   "author": "Fernando Rojas <fernando@fre-studios.com> (https://fre-studios.com/)",
   "license": "MIT",

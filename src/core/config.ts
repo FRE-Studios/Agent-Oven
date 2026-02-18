@@ -175,13 +175,6 @@ export function getSchedulerLogPath(config: Config): string {
 }
 
 /**
- * Get the launchd plist path
- */
-export function getLaunchdPlistPath(): string {
-  return path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.agent-oven.scheduler.plist');
-}
-
-/**
  * Update specific config values
  */
 export function updateConfig(updates: Partial<Config>): Config {

@@ -2,7 +2,6 @@ import { vi } from 'vitest';
 
 vi.mock('../config.js', () => ({
   saveConfig: vi.fn(),
-  getLaunchdPlistPath: vi.fn(() => '/tmp/test.plist'),
 }));
 
 import { detectTimezone, buildConfig } from '../setup.js';

@@ -2,13 +2,11 @@ import { vi } from 'vitest';
 vi.mock('node:fs');
 import * as fs from 'node:fs';
 
-import * as os from 'node:os';
 import {
   getJobsFilePath,
   getLogsDir,
   getJobLogsDir,
   getSchedulerLogPath,
-  getLaunchdPlistPath,
   getDefaultConfig,
   loadConfig,
   saveConfig,
@@ -73,15 +71,6 @@ describe('getSchedulerLogPath', () => {
   it('returns <projectDir>/logs/scheduler.log', () => {
     const config = makeConfig({ projectDir: '/tmp/test' });
     expect(getSchedulerLogPath(config)).toBe('/tmp/test/logs/scheduler.log');
-  });
-});
-
-// ─── getLaunchdPlistPath ────────────────────────────────────
-
-describe('getLaunchdPlistPath', () => {
-  it('returns ~/Library/LaunchAgents/com.agent-oven.scheduler.plist', () => {
-    const expected = `${os.homedir()}/Library/LaunchAgents/com.agent-oven.scheduler.plist`;
-    expect(getLaunchdPlistPath()).toBe(expected);
   });
 });
 

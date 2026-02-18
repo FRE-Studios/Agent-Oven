@@ -5,6 +5,7 @@ import type { Config, SystemStatus } from '../../core/types.js';
 import type { Screen } from '../types.js';
 import { getSystemStatus } from '../../core/docker.js';
 import { formatRelativeTime } from '../../core/scheduler.js';
+import { platform } from '../../core/platform.js';
 
 interface DashboardProps {
   config: Config;
@@ -71,8 +72,8 @@ export function Dashboard({ config, onNavigate }: DashboardProps) {
       <Box marginTop={1}>
         <Text bold>Status: </Text>
         <StatusIndicator
-          running={status?.colima.running ?? false}
-          label="Colima"
+          running={status?.runtime.running ?? false}
+          label={platform.needsVM ? 'Colima' : 'Docker'}
         />
         <Text>   </Text>
         <StatusIndicator

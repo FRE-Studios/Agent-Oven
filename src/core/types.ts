@@ -151,13 +151,16 @@ export interface Config {
   auth?: AuthConfig;
 }
 
-/** Status of Colima VM */
-export interface ColimaStatus {
+/** Status of the container runtime (Colima on macOS, native Docker on Linux) */
+export interface RuntimeStatus {
   running: boolean;
   cpu?: number;
   memory?: number;
   disk?: number;
 }
+
+/** @deprecated Use RuntimeStatus instead */
+export type ColimaStatus = RuntimeStatus;
 
 /** Status of the scheduler daemon */
 export interface SchedulerStatus {
@@ -191,7 +194,7 @@ export interface JobRunResult {
 
 /** Overall system status */
 export interface SystemStatus {
-  colima: ColimaStatus;
+  runtime: RuntimeStatus;
   scheduler: SchedulerStatus;
   jobs: {
     total: number;

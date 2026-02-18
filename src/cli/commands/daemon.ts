@@ -2,12 +2,9 @@
  * `agent-oven daemon <action>` — Manage the scheduler daemon
  */
 
-import * as fs from 'node:fs';
-import { execa } from 'execa';
 import type { Command } from 'commander';
 import { handleError } from '../utils/errors.js';
-import { getLaunchdPlistPath } from '../../core/config.js';
-import { getSchedulerStatus } from '../../core/docker.js';
+import { platform } from '../../core/platform.js';
 import { success, error, info, statusIcon } from '../utils/output.js';
 
 export function register(program: Command): void {
@@ -20,12 +17,12 @@ export function register(program: Command): void {
     .description('Show daemon status')
     .action(async () => {
       try {
-        const plistPath = getLaunchdPlistPath();
-        const plistExists = fs.existsSync(plistPath);
-        const status = await getSchedulerStatus();
+        const configPath = platform.getDaemonConfigPath();
+        const configExists = platform.daemonConfigExists();
+        const status = await platform.getSchedulerStatus();
 
         console.log('\nScheduler Daemon');
-        console.log(`  Plist:    ${plistExists ? statusIcon(true) + ' ' + plistPath : statusIcon(false) + ' Not found'}`);
+        console.log(`  Config:   ${configExists ? statusIcon(true) + ' ' + configPath : statusIcon(false) + ' Not found'}`);
         console.log(`  Loaded:   ${statusIcon(status.loaded)} ${status.loaded ? 'Yes' : 'No'}`);
         if (status.lastExitStatus !== undefined) {
           console.log(`  Last exit: ${status.lastExitStatus}`);
@@ -41,19 +38,18 @@ export function register(program: Command): void {
     .description('Start the scheduler daemon')
     .action(async () => {
       try {
-        const plistPath = getLaunchdPlistPath();
-        if (!fs.existsSync(plistPath)) {
-          error(`Plist not found at ${plistPath}. Run \`agent-oven init\` first.`);
+        if (!platform.daemonConfigExists()) {
+          error(`Daemon config not found at ${platform.getDaemonConfigPath()}. Run \`agent-oven init\` first.`);
           process.exit(1);
         }
 
-        const status = await getSchedulerStatus();
+        const status = await platform.getSchedulerStatus();
         if (status.loaded) {
           info('Daemon is already loaded');
           return;
         }
 
-        await execa('launchctl', ['load', plistPath]);
+        await platform.startDaemon();
         success('Daemon started');
       } catch (err) {
         handleError(err);
@@ -65,15 +61,14 @@ export function register(program: Command): void {
     .description('Stop the scheduler daemon')
     .action(async () => {
       try {
-        const plistPath = getLaunchdPlistPath();
-        const status = await getSchedulerStatus();
+        const status = await platform.getSchedulerStatus();
 
         if (!status.loaded) {
           info('Daemon is not loaded');
           return;
         }
 
-        await execa('launchctl', ['unload', plistPath]);
+        await platform.stopDaemon();
         success('Daemon stopped');
       } catch (err) {
         handleError(err);
@@ -85,19 +80,18 @@ export function register(program: Command): void {
     .description('Restart the scheduler daemon')
     .action(async () => {
       try {
-        const plistPath = getLaunchdPlistPath();
-        if (!fs.existsSync(plistPath)) {
-          error(`Plist not found at ${plistPath}. Run \`agent-oven init\` first.`);
+        if (!platform.daemonConfigExists()) {
+          error(`Daemon config not found at ${platform.getDaemonConfigPath()}. Run \`agent-oven init\` first.`);
           process.exit(1);
         }
 
-        const status = await getSchedulerStatus();
+        const status = await platform.getSchedulerStatus();
         if (status.loaded) {
-          await execa('launchctl', ['unload', plistPath]);
+          await platform.stopDaemon();
           info('Daemon stopped');
         }
 
-        await execa('launchctl', ['load', plistPath]);
+        await platform.startDaemon();
         success('Daemon started');
       } catch (err) {
         handleError(err);

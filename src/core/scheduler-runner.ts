@@ -12,9 +12,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Config } from './types.js';
 import { listJobs, updateLastRun, removeJob } from './jobs.js';
-import { getColimaStatus, startColima, runJob } from './docker.js';
+import { runJob } from './docker.js';
 import { shouldRunNow } from './scheduler.js';
 import { getLogsDir, getSchedulerLogPath } from './config.js';
+import { platform } from './platform.js';
 
 /**
  * Timestamped log to stdout.
@@ -148,16 +149,20 @@ async function isJobRunning(jobId: string): Promise<boolean> {
 }
 
 /**
- * Start Colima if not running.
+ * Ensure the container runtime is available.
  */
-async function ensureColima(config: Config): Promise<void> {
-  const status = await getColimaStatus();
+async function ensureRuntime(config: Config): Promise<void> {
+  const status = await platform.getRuntimeStatus();
   if (status.running) return;
 
-  log(
-    `Colima not running, starting with cpu=${config.colima.cpu} memory=${config.colima.memory} disk=${config.colima.disk}...`,
-  );
-  await startColima(config);
+  if (platform.needsVM) {
+    log(
+      `Runtime not running, starting with cpu=${config.colima.cpu} memory=${config.colima.memory} disk=${config.colima.disk}...`,
+    );
+  } else {
+    log('Runtime not running, checking Docker...');
+  }
+  await platform.ensureRuntime(config);
 }
 
 /**
@@ -195,12 +200,12 @@ export async function runSchedulerTick(config: Config): Promise<number> {
     return 0;
   }
 
-  // --- Ensure Colima ---
+  // --- Ensure container runtime ---
   try {
-    await ensureColima(config);
+    await ensureRuntime(config);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    log(`ERROR: Failed to start Colima: ${msg}`);
+    log(`ERROR: Failed to start container runtime: ${msg}`);
     return 1;
   }
 

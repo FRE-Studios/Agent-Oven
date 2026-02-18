@@ -11,19 +11,16 @@ import type {
   Job,
   DockerJob,
   PipelineJob,
-  ColimaStatus,
-  SchedulerStatus,
   RunningContainer,
   JobLogEntry,
   JobRunResult,
   SystemStatus,
 } from './types.js';
-import { isDockerJob, isPipelineJob } from './types.js';
+import { isPipelineJob } from './types.js';
 import {
   getLogsDir,
   getJobLogsDir,
   getSchedulerLogPath,
-  getLaunchdPlistPath,
 } from './config.js';
 import { getJobStats } from './jobs.js';
 import {
@@ -32,86 +29,7 @@ import {
   validateAuthForJob,
   DEFAULT_AUTH_CONFIG,
 } from './auth.js';
-
-/**
- * Check if Colima is running
- */
-export async function getColimaStatus(): Promise<ColimaStatus> {
-  try {
-    const { stdout } = await execa('colima', ['status'], { reject: false });
-    const running = stdout.includes('Running') || stdout.includes('is running');
-
-    if (!running) {
-      return { running: false };
-    }
-
-    // Parse CPU/memory/disk from output
-    const cpuMatch = stdout.match(/CPU:\s*(\d+)/);
-    const memoryMatch = stdout.match(/Memory:\s*(\d+)/);
-    const diskMatch = stdout.match(/Disk:\s*(\d+)/);
-
-    return {
-      running: true,
-      cpu: cpuMatch ? parseInt(cpuMatch[1], 10) : undefined,
-      memory: memoryMatch ? parseInt(memoryMatch[1], 10) : undefined,
-      disk: diskMatch ? parseInt(diskMatch[1], 10) : undefined,
-    };
-  } catch {
-    return { running: false };
-  }
-}
-
-/**
- * Start Colima VM
- */
-export async function startColima(config: Config): Promise<void> {
-  const { cpu, memory, disk } = config.colima;
-  await execa('colima', [
-    'start',
-    '--cpu', cpu.toString(),
-    '--memory', memory.toString(),
-    '--disk', disk.toString(),
-  ]);
-}
-
-/**
- * Stop Colima VM
- */
-export async function stopColima(): Promise<void> {
-  await execa('colima', ['stop']);
-}
-
-/**
- * Check if the scheduler daemon is loaded
- */
-export async function getSchedulerStatus(): Promise<SchedulerStatus> {
-  try {
-    const { stdout } = await execa('launchctl', ['list'], { reject: false });
-    const loaded = stdout.includes('com.agent-oven.scheduler');
-
-    if (!loaded) {
-      return { loaded: false };
-    }
-
-    // Try to get last exit status
-    try {
-      const { stdout: detailOutput } = await execa(
-        'launchctl',
-        ['list', 'com.agent-oven.scheduler'],
-        { reject: false }
-      );
-      const exitMatch = detailOutput.match(/LastExitStatus\s*=\s*(\d+)/);
-      return {
-        loaded: true,
-        lastExitStatus: exitMatch ? parseInt(exitMatch[1], 10) : undefined,
-      };
-    } catch {
-      return { loaded: true };
-    }
-  } catch {
-    return { loaded: false };
-  }
-}
+import { platform } from './platform.js';
 
 /**
  * Get list of running job containers
@@ -206,9 +124,9 @@ export function getRecentExecutions(config: Config, limit = 5): JobLogEntry[] {
  * Get complete system status
  */
 export async function getSystemStatus(config: Config): Promise<SystemStatus> {
-  const [colima, scheduler, runningContainers] = await Promise.all([
-    getColimaStatus(),
-    getSchedulerStatus(),
+  const [runtime, scheduler, runningContainers] = await Promise.all([
+    platform.getRuntimeStatus(),
+    platform.getSchedulerStatus(),
     getRunningContainers(),
   ]);
 
@@ -216,7 +134,7 @@ export async function getSystemStatus(config: Config): Promise<SystemStatus> {
   const recentExecutions = getRecentExecutions(config);
 
   return {
-    colima,
+    runtime,
     scheduler,
     jobs,
     runningContainers,

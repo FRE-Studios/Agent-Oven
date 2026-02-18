@@ -3,20 +3,19 @@ import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import {
-  checkHomebrew,
-  checkDependency,
-  brewInstall,
   setupFiles,
   discoverImages,
   buildImage,
   detectTimezone,
-  installLaunchd,
   verifyDocker,
-  getColimaStatus,
-  startColima,
   buildConfig,
 } from '../../core/setup.js';
-import type { DependencyStatus } from '../../core/setup.js';
+import { platform } from '../../core/platform.js';
+
+interface DependencyStatus {
+  installed: boolean;
+  version?: string;
+}
 
 type Step =
   | 'welcome'
@@ -29,7 +28,7 @@ type Step =
   | 'image-select'
   | 'image-build'
   | 'timezone'
-  | 'launchd'
+  | 'daemon'
   | 'summary';
 
 type StepStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
@@ -83,8 +82,8 @@ export function InitWizard() {
   const [buildOutput, setBuildOutput] = useState('');
   const [buildsDone, setBuildsDone] = useState(false);
 
-  // Launchd state
-  const [launchdStatus, setLaunchdStatus] = useState<StepStatus>('pending');
+  // Daemon state
+  const [daemonStatus, setDaemonStatus] = useState<StepStatus>('pending');
 
   // Active field for colima-config form
   const [configField, setConfigField] = useState<'cpu' | 'memory' | 'disk'>('cpu');
@@ -100,19 +99,24 @@ export function InitWizard() {
     const run = async () => {
       const results: PrereqResult[] = [];
 
-      const homebrew = await checkHomebrew();
+      // Check package manager (Homebrew on macOS, no-op on Linux)
+      const pkgMgr = await platform.checkPackageManager();
       if (cancelled) return;
-      results.push({ name: 'homebrew', status: homebrew });
-      setPrereqs([...results]);
 
-      if (!homebrew.installed) {
-        setError('Homebrew is required. Install it from https://brew.sh');
-        setPrereqsDone(true);
-        return;
+      if (platform.needsVM) {
+        // On macOS, Homebrew is required
+        results.push({ name: 'homebrew', status: { installed: pkgMgr.available, version: pkgMgr.version } });
+        setPrereqs([...results]);
+
+        if (!pkgMgr.available) {
+          setError('Homebrew is required. Install it from https://brew.sh');
+          setPrereqsDone(true);
+          return;
+        }
       }
 
-      for (const dep of ['colima', 'docker', 'jq']) {
-        const status = await checkDependency(dep);
+      for (const dep of platform.prerequisites) {
+        const status = await platform.checkDependency(dep);
         if (cancelled) return;
         results.push({ name: dep, status });
         setPrereqs([...results]);
@@ -147,7 +151,7 @@ export function InitWizard() {
         setDepStatuses({ ...statuses });
         setDepOutput('');
 
-        const result = await brewInstall(dep, (line) => {
+        const result = await platform.installPackage(dep, (line) => {
           if (!cancelled) setDepOutput(line);
         });
 
@@ -156,7 +160,7 @@ export function InitWizard() {
         setDepStatuses({ ...statuses });
 
         if (result === 'failed') {
-          setError(`Failed to install ${dep} via Homebrew.`);
+          setError(`Failed to install ${dep}. Please install it manually.`);
           return;
         }
       }
@@ -177,7 +181,7 @@ export function InitWizard() {
       setColimaStatus('running');
 
       // Check if already running
-      const status = await getColimaStatus();
+      const status = await platform.getRuntimeStatus();
       if (cancelled) return;
 
       if (status.running) {
@@ -193,14 +197,14 @@ export function InitWizard() {
           docker: { defaultCpus: 1, defaultMemory: '512m' },
           timezone: timezone || detectTimezone(),
         };
-        await startColima(config);
+        await platform.startRuntime(config);
         if (cancelled) return;
         setColimaRunning(true);
         setColimaStatus('done');
       } catch (err) {
         if (cancelled) return;
         setColimaStatus('failed');
-        setError(err instanceof Error ? err.message : 'Failed to start Colima');
+        setError(err instanceof Error ? err.message : 'Failed to start runtime');
       }
     };
 
@@ -295,21 +299,21 @@ export function InitWizard() {
     setTimezone(detectTimezone());
   }, [step]);
 
-  // --- Step: launchd ---
+  // --- Step: daemon ---
   useEffect(() => {
-    if (step !== 'launchd') return;
+    if (step !== 'daemon') return;
     let cancelled = false;
 
     const run = async () => {
-      setLaunchdStatus('running');
-      const result = await installLaunchd(projectDir);
+      setDaemonStatus('running');
+      const result = await platform.installDaemon(projectDir);
       if (cancelled) return;
 
       if (result.success) {
-        setLaunchdStatus('done');
+        setDaemonStatus('done');
       } else {
-        setLaunchdStatus('failed');
-        setError(result.error ?? 'Failed to install launchd agent');
+        setDaemonStatus('failed');
+        setError(result.error ?? 'Failed to install scheduler daemon');
       }
     };
 
@@ -331,31 +335,46 @@ export function InitWizard() {
       timezone: tz,
     });
 
-    setSummaryItems([
+    const items: { label: string; value: string; ok: boolean }[] = [
       { label: 'Project directory', value: projectDir, ok: true },
-      { label: 'Colima VM', value: `${cpu} CPU, ${memory}GB RAM, ${disk}GB disk`, ok: colimaRunning },
+    ];
+    if (platform.needsVM) {
+      items.push({ label: 'Colima VM', value: `${cpu} CPU, ${memory}GB RAM, ${disk}GB disk`, ok: colimaRunning });
+    }
+    items.push(
       { label: 'Docker', value: dockerVersion || 'connected', ok: dockerStatus === 'done' },
       { label: 'Images built', value: `${Array.from(selectedImages).length} images`, ok: buildsDone },
       { label: 'Timezone', value: tz, ok: true },
-      { label: 'Scheduler daemon', value: 'launchd agent', ok: launchdStatus === 'done' },
-    ]);
-  }, [step, projectDir, cpu, memory, disk, timezone, colimaRunning, dockerVersion, dockerStatus, selectedImages, buildsDone, launchdStatus]);
+      { label: 'Scheduler daemon', value: platform.needsVM ? 'launchd agent' : 'systemd timer', ok: daemonStatus === 'done' },
+    );
+    setSummaryItems(items);
+  }, [step, projectDir, cpu, memory, disk, timezone, colimaRunning, dockerVersion, dockerStatus, selectedImages, buildsDone, daemonStatus]);
 
   // --- Navigation helpers ---
   const advance = useCallback(() => {
     setError(null);
 
+    // Build the step list dynamically based on platform
     const steps: Step[] = [
-      'welcome', 'prerequisites', 'dependencies', 'colima-config',
-      'colima-start', 'docker-verify', 'files-setup', 'image-select',
-      'image-build', 'timezone', 'launchd', 'summary',
+      'welcome', 'prerequisites', 'dependencies',
     ];
+    if (platform.needsVM) {
+      steps.push('colima-config', 'colima-start');
+    }
+    steps.push(
+      'docker-verify', 'files-setup', 'image-select',
+      'image-build', 'timezone', 'daemon', 'summary',
+    );
 
     const idx = steps.indexOf(step);
 
     // Skip dependencies step if nothing to install
     if (step === 'prerequisites' && missingDeps.length === 0) {
-      setStep('colima-config');
+      // Jump to the step after dependencies
+      const depsIdx = steps.indexOf('dependencies');
+      if (depsIdx < steps.length - 1) {
+        setStep(steps[depsIdx + 1]);
+      }
       return;
     }
 
@@ -499,8 +518,8 @@ export function InitWizard() {
         }
         break;
 
-      case 'launchd':
-        if (launchdStatus === 'done') {
+      case 'daemon':
+        if (daemonStatus === 'done') {
           if (key.return) advance();
         }
         break;
@@ -568,8 +587,8 @@ export function InitWizard() {
           onTimezoneChange={setTimezone}
         />
       )}
-      {step === 'launchd' && (
-        <LaunchdStep status={launchdStatus} error={error} />
+      {step === 'daemon' && (
+        <DaemonStep status={daemonStatus} error={error} />
       )}
       {step === 'summary' && <SummaryStep items={summaryItems} />}
 
@@ -605,10 +624,10 @@ function WelcomeStep() {
       </Box>
       <Box marginTop={1} flexDirection="column">
         <Text>Welcome to Agent Oven setup. This wizard will:</Text>
-        <Text dimColor>  1. Check and install prerequisites (Colima, Docker, jq)</Text>
-        <Text dimColor>  2. Configure and start the Colima VM</Text>
-        <Text dimColor>  3. Create directories and build Docker images</Text>
-        <Text dimColor>  4. Install the scheduler daemon</Text>
+        <Text dimColor>  1. Check and install prerequisites ({platform.prerequisites.join(', ')})</Text>
+        {platform.needsVM && <Text dimColor>  2. Configure and start the Colima VM</Text>}
+        <Text dimColor>  {platform.needsVM ? '3' : '2'}. Create directories and build Docker images</Text>
+        <Text dimColor>  {platform.needsVM ? '4' : '3'}. Install the scheduler daemon</Text>
       </Box>
       <Box marginTop={1}>
         <Text dimColor>[enter] Start  [q] Quit</Text>
@@ -640,7 +659,7 @@ function PrerequisitesStep({
             {!p.status.installed && <Text color="red"> not found</Text>}
           </Box>
         ))}
-        {!done && prereqs.length < 4 && (
+        {!done && (
           <Box>
             <Text color="cyan"><Spinner type="dots" /></Text>
             <Text> Checking...</Text>
@@ -680,7 +699,7 @@ function DependenciesStep({
         {deps.map((dep) => (
           <Box key={dep}>
             <StatusIcon status={statuses[dep] ?? 'pending'} />
-            <Text> brew install {dep}</Text>
+            <Text> Installing {dep}...</Text>
           </Box>
         ))}
       </Box>
@@ -951,7 +970,7 @@ function TimezoneStep({
   );
 }
 
-function LaunchdStep({
+function DaemonStep({
   status,
   error,
 }: {
@@ -960,11 +979,11 @@ function LaunchdStep({
 }) {
   return (
     <Box flexDirection="column">
-      <StepHeader title="Installing Scheduler Daemon" step={10} />
+      <StepHeader title="Installing Scheduler Daemon" step={platform.needsVM ? 10 : 8} />
       <Box marginTop={1}>
         <StatusIcon status={status} />
         <Text>
-          {status === 'running' ? ' Installing launchd agent...' : ''}
+          {status === 'running' ? ' Installing scheduler daemon...' : ''}
           {status === 'done' ? ' Scheduler daemon installed and loaded' : ''}
           {status === 'failed' ? ' Failed to install daemon' : ''}
         </Text>
