@@ -227,7 +227,11 @@ export function InitWizard() {
         setDockerStatus('done');
       } else {
         setDockerStatus('failed');
-        setError('Docker is not responding. Check Colima status.');
+        setError(
+          platform.needsVM
+            ? 'Docker is not responding. Check Colima status.'
+            : 'Docker is not responding. Start Docker and retry.',
+        );
       }
     };
 
@@ -410,7 +414,7 @@ export function InitWizard() {
         retry();
         return;
       }
-      if (input === 's' && step !== 'dependencies' && step !== 'colima-config') {
+      if (input === 's' && step !== 'colima-config') {
         setError(null);
         advance();
         return;
@@ -597,7 +601,7 @@ export function InitWizard() {
         <Box marginTop={1}>
           <Text color="red">Error: {error}</Text>
           <Text dimColor>
-            {step === 'dependencies' || step === 'colima-config'
+            {step === 'colima-config'
               ? '  [r] Retry  [q] Quit'
               : '  [r] Retry  [s] Skip  [q] Quit'}
           </Text>
@@ -814,7 +818,7 @@ function DockerVerifyStep({
 }) {
   return (
     <Box flexDirection="column">
-      <StepHeader title="Verifying Docker" step={5} />
+      <StepHeader title="Verifying Docker" step={platform.needsVM ? 5 : 3} />
       <Box marginTop={1}>
         <StatusIcon status={status} />
         <Text>
@@ -836,7 +840,7 @@ function FilesSetupStep({ result }: { result: { created: string[]; existed: stri
   if (!result) {
     return (
       <Box flexDirection="column">
-        <StepHeader title="Setting Up Files" step={6} />
+        <StepHeader title="Setting Up Files" step={platform.needsVM ? 6 : 4} />
         <Box marginTop={1}>
           <Text color="cyan"><Spinner type="dots" /></Text>
           <Text> Creating directories...</Text>
@@ -847,7 +851,7 @@ function FilesSetupStep({ result }: { result: { created: string[]; existed: stri
 
   return (
     <Box flexDirection="column">
-      <StepHeader title="Setting Up Files" step={6} />
+      <StepHeader title="Setting Up Files" step={platform.needsVM ? 6 : 4} />
       <Box flexDirection="column" marginTop={1}>
         {result.created.map((f) => (
           <Box key={f}>
@@ -879,7 +883,7 @@ function ImageSelectStep({
 }) {
   return (
     <Box flexDirection="column">
-      <StepHeader title="Select Docker Images to Build" step={7} />
+      <StepHeader title="Select Docker Images to Build" step={platform.needsVM ? 7 : 5} />
       {images.length === 0 ? (
         <Box marginTop={1}>
           <Text dimColor>No images found in images/ directory</Text>
@@ -915,7 +919,7 @@ function ImageBuildStep({
 
   return (
     <Box flexDirection="column">
-      <StepHeader title="Building Docker Images" step={8} />
+      <StepHeader title="Building Docker Images" step={platform.needsVM ? 8 : 6} />
       <Box flexDirection="column" marginTop={1}>
         {entries.map(([name, status]) => (
           <Box key={name}>
@@ -949,7 +953,7 @@ function TimezoneStep({
 }) {
   return (
     <Box flexDirection="column">
-      <StepHeader title="Timezone" step={9} />
+      <StepHeader title="Timezone" step={platform.needsVM ? 9 : 7} />
       <Box marginTop={1}>
         {editing ? (
           <Box>
@@ -1035,7 +1039,7 @@ function StepHeader({ title, step }: { title: string; step: number }) {
   return (
     <Box>
       <Text bold color="magenta">{title}</Text>
-      <Text dimColor> (step {step}/10)</Text>
+      <Text dimColor> (step {step}/{platform.needsVM ? 10 : 8})</Text>
     </Box>
   );
 }

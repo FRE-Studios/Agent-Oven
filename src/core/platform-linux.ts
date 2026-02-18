@@ -27,6 +27,27 @@ function getSystemdUserDir(): string {
   return path.join(os.homedir(), '.config', 'systemd', 'user');
 }
 
+function escapeSystemdArg(arg: string): string {
+  // systemd treats % as a specifier marker; escape to preserve literal values.
+  const escaped = arg
+    .replace(/%/g, '%%')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+
+  if (escaped.length === 0 || /[\s"]/u.test(escaped)) {
+    return `"${escaped}"`;
+  }
+  return escaped;
+}
+
+function escapeSystemdValue(value: string): string {
+  const escaped = value
+    .replace(/%/g, '%%')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
 // ── Adapter ────────────────────────────────────────────────────
 
 export class LinuxAdapter implements PlatformAdapter {
@@ -113,9 +134,12 @@ export class LinuxAdapter implements PlatformAdapter {
   }
 
   async generateDaemonConfig(projectDir: string): Promise<string> {
-    const cmdArgs = await resolveSchedulerCommand(projectDir);
-    const execStart = cmdArgs.join(' ');
+    const cmdArgs = await resolveSchedulerCommand(projectDir, {
+      allowLegacyFallback: false,
+    });
+    const execStart = cmdArgs.map(escapeSystemdArg).join(' ');
     const schedulerLogPath = path.join(projectDir, 'logs', 'scheduler.log');
+    const logOutput = escapeSystemdValue(`append:${schedulerLogPath}`);
 
     const serviceUnit = `[Unit]
 Description=Agent Oven Scheduler (one-shot tick)
@@ -123,8 +147,8 @@ Description=Agent Oven Scheduler (one-shot tick)
 [Service]
 Type=oneshot
 ExecStart=${execStart}
-StandardOutput=append:${schedulerLogPath}
-StandardError=append:${schedulerLogPath}
+StandardOutput=${logOutput}
+StandardError=${logOutput}
 `;
 
     const timerUnit = `[Unit]

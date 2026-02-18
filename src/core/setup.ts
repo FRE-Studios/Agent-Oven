@@ -116,9 +116,14 @@ export function detectTimezone(): string {
  *  1. Pin to the currently-running CLI process where possible.
  *  2. Fallback to project-local dist/cli.js (for built source checkouts).
  *  3. Fallback to package-local dist/cli.js (for npm global installs).
- *  4. Final fallback: legacy scheduler.sh for unbuilt source checkouts.
+ *  4. Optional final fallback: legacy scheduler.sh for unbuilt source checkouts.
  */
-export async function resolveSchedulerCommand(projectDir: string): Promise<string[]> {
+export async function resolveSchedulerCommand(
+  projectDir: string,
+  options?: { allowLegacyFallback?: boolean },
+): Promise<string[]> {
+  const allowLegacyFallback = options?.allowLegacyFallback ?? true;
+
   // 1) Pin to the current CLI invocation path when possible.
   const argv1 = process.argv[1];
   if (argv1) {
@@ -143,14 +148,22 @@ export async function resolveSchedulerCommand(projectDir: string): Promise<strin
     return [process.execPath, packageCliJs, 'scheduler-tick'];
   }
 
-  // 4) Legacy fallback for source checkouts not yet built.
+  // 4) Optional legacy fallback for source checkouts not yet built.
   const legacyScheduler = path.resolve(projectDir, 'scheduler.sh');
-  if (fs.existsSync(legacyScheduler)) {
+  if (allowLegacyFallback && fs.existsSync(legacyScheduler)) {
     return [legacyScheduler];
   }
 
+  const lookedFor = `${projectCliJs}, ${packageCliJs}, and ${legacyScheduler}`;
+  if (!allowLegacyFallback) {
+    throw new Error(
+      `Unable to resolve scheduler command for this platform. Looked for ${lookedFor}. ` +
+      'Build the project first so dist/cli.js exists (for example: npm run build).',
+    );
+  }
+
   throw new Error(
-    `Unable to resolve scheduler command. Looked for ${projectCliJs}, ${packageCliJs}, and ${legacyScheduler}.`
+    `Unable to resolve scheduler command. Looked for ${lookedFor}.`
   );
 }
 

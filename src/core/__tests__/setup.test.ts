@@ -1,10 +1,17 @@
 import { vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 vi.mock('../config.js', () => ({
   saveConfig: vi.fn(),
 }));
 
-import { detectTimezone, buildConfig } from '../setup.js';
+import {
+  detectTimezone,
+  buildConfig,
+  resolveSchedulerCommand,
+} from '../setup.js';
 
 // ─── detectTimezone ─────────────────────────────────────────
 
@@ -82,5 +89,36 @@ describe('buildConfig', () => {
     });
     expect(config.auth).toBeDefined();
     expect(config.auth!.defaultMode).toBe('host-login');
+  });
+});
+
+// ─── resolveSchedulerCommand ──────────────────────────────────
+
+describe('resolveSchedulerCommand', () => {
+  const originalArgv = process.argv.slice();
+
+  afterEach(() => {
+    process.argv = originalArgv.slice();
+  });
+
+  it('returns legacy scheduler.sh when fallback is enabled', async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-oven-'));
+    const schedulerPath = path.join(projectDir, 'scheduler.sh');
+    fs.writeFileSync(schedulerPath, '#!/bin/sh\n');
+    process.argv = [process.execPath, ''];
+
+    await expect(resolveSchedulerCommand(projectDir)).resolves.toEqual([schedulerPath]);
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it('throws when only scheduler.sh exists and legacy fallback is disabled', async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-oven-'));
+    fs.writeFileSync(path.join(projectDir, 'scheduler.sh'), '#!/bin/sh\n');
+    process.argv = [process.execPath, ''];
+
+    await expect(
+      resolveSchedulerCommand(projectDir, { allowLegacyFallback: false }),
+    ).rejects.toThrow('Build the project first');
+    fs.rmSync(projectDir, { recursive: true, force: true });
   });
 });

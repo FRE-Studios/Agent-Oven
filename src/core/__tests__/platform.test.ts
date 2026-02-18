@@ -33,9 +33,11 @@ import * as path from 'node:path';
 import { DarwinAdapter } from '../platform-darwin.js';
 import { LinuxAdapter } from '../platform-linux.js';
 import { getPlatformAdapter } from '../platform.js';
+import { resolveSchedulerCommand } from '../setup.js';
 
 const mockedExeca = vi.mocked(execa);
 const mockedExistsSync = vi.mocked(fs.existsSync);
+const mockedResolveSchedulerCommand = vi.mocked(resolveSchedulerCommand);
 
 // ─── Factory ─────────────────────────────────────────────────
 
@@ -228,6 +230,28 @@ describe('LinuxAdapter', () => {
     it('contains the separator used by installDaemon', async () => {
       const content = await adapter.generateDaemonConfig('/opt/agent-oven');
       expect(content).toContain('\n---\n');
+    });
+
+    it('quotes ExecStart args and log paths when they contain spaces', async () => {
+      mockedResolveSchedulerCommand.mockResolvedValueOnce([
+        '/usr/bin/node',
+        '/opt/agent oven/dist/cli.js',
+        'scheduler-tick',
+      ]);
+
+      const content = await adapter.generateDaemonConfig('/opt/agent oven');
+      expect(content).toContain(
+        'ExecStart=/usr/bin/node "/opt/agent oven/dist/cli.js" scheduler-tick',
+      );
+      expect(content).toContain('StandardOutput="append:/opt/agent oven/logs/scheduler.log"');
+      expect(content).toContain('StandardError="append:/opt/agent oven/logs/scheduler.log"');
+    });
+
+    it('disables legacy scheduler fallback on Linux', async () => {
+      await adapter.generateDaemonConfig('/opt/agent-oven');
+      expect(mockedResolveSchedulerCommand).toHaveBeenCalledWith('/opt/agent-oven', {
+        allowLegacyFallback: false,
+      });
     });
   });
 
