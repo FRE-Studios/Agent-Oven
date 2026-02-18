@@ -1,6 +1,6 @@
 {
   "name": "agent-oven",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Job scheduler TUI for Docker containers (macOS and Linux)",
   "type": "module",
   "main": "dist/core/index.js",
