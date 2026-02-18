@@ -7,6 +7,8 @@
 
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
+import { checkForUpdate } from './core/update-check.js';
+import type { UpdateInfo } from './core/update-check.js';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
@@ -16,6 +18,13 @@ if (process.argv.length <= 2) {
   await launchTUI();
   // launchTUI waits until exit, so this won't reach below
 } else {
+  // Fire-and-forget update check (skip for init/scheduler-tick)
+  const subcommand = process.argv[2];
+  const skipUpdateCheck = subcommand === 'init' || subcommand === 'scheduler-tick';
+  const updatePromise: Promise<UpdateInfo | null> = skipUpdateCheck
+    ? Promise.resolve(null)
+    : checkForUpdate();
+
   const program = new Command();
 
   program
@@ -65,6 +74,15 @@ if (process.argv.length <= 2) {
     });
 
   await program.parseAsync();
+
+  // Print update notification after command completes
+  const update = await updatePromise;
+  if (update?.updateAvailable) {
+    const { warn } = await import('./cli/utils/output.js');
+    warn(
+      `Update available: ${update.currentVersion} → ${update.latestVersion}. Run "npm i -g agent-oven" to update.`,
+    );
+  }
 }
 
 async function launchTUI(): Promise<void> {

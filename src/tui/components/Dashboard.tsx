@@ -6,6 +6,8 @@ import type { Screen } from '../types.js';
 import { getSystemStatus } from '../../core/docker.js';
 import { formatRelativeTime } from '../../core/scheduler.js';
 import { platform } from '../../core/platform.js';
+import { checkForUpdate } from '../../core/update-check.js';
+import type { UpdateInfo } from '../../core/update-check.js';
 
 interface DashboardProps {
   config: Config;
@@ -16,6 +18,7 @@ export function Dashboard({ config, onNavigate }: DashboardProps) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   // Load status on mount
   useEffect(() => {
@@ -32,6 +35,9 @@ export function Dashboard({ config, onNavigate }: DashboardProps) {
     };
 
     loadStatus();
+    checkForUpdate().then((info) => {
+      if (info?.updateAvailable) setUpdateInfo(info);
+    });
 
     // Refresh every 10 seconds
     const interval = setInterval(loadStatus, 10000);
@@ -67,6 +73,14 @@ export function Dashboard({ config, onNavigate }: DashboardProps) {
   return (
     <Box flexDirection="column">
       <Header />
+
+      {updateInfo && (
+        <Box marginTop={1}>
+          <Text color="yellow">
+            Update available: {updateInfo.currentVersion} → {updateInfo.latestVersion}. Run "npm i -g agent-oven" to update.
+          </Text>
+        </Box>
+      )}
 
       {/* System Status */}
       <Box marginTop={1}>

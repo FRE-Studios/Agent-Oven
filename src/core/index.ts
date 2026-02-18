@@ -9,3 +9,4 @@ export * from './docker.js';
 export * from './scheduler.js';
 export * from './auth.js';
 export * from './platform.js';
+export * from './update-check.js';
