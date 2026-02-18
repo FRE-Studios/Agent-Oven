@@ -22,26 +22,34 @@ export function Dashboard({ config, onNavigate }: DashboardProps) {
 
   // Load status on mount
   useEffect(() => {
+    let isMounted = true;
+
     const loadStatus = async () => {
       try {
         const s = await getSystemStatus(config);
+        if (!isMounted) return;
         setStatus(s);
         setError(null);
       } catch (err) {
+        if (!isMounted) return;
         setError(err instanceof Error ? err.message : 'Failed to load status');
       } finally {
+        if (!isMounted) return;
         setLoading(false);
       }
     };
 
     loadStatus();
     checkForUpdate().then((info) => {
-      if (info?.updateAvailable) setUpdateInfo(info);
+      if (isMounted && info?.updateAvailable) setUpdateInfo(info);
     });
 
     // Refresh every 10 seconds
     const interval = setInterval(loadStatus, 10000);
-    return () => clearInterval(interval);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [config]);
 
   if (loading && !status) {
@@ -107,17 +115,23 @@ export function Dashboard({ config, onNavigate }: DashboardProps) {
       </Box>
 
       {/* Running Containers */}
-      {status?.runningContainers && status.runningContainers.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text bold underline>Running Jobs</Text>
-          {status.runningContainers.map((container) => (
-            <Box key={container.name}>
-              <Text color="cyan">{container.jobId || container.name}</Text>
-              <Text dimColor> - {container.status}</Text>
-            </Box>
-          ))}
+      <Box flexDirection="column" marginTop={1}>
+        <Text bold underline>Running Jobs</Text>
+        <Box borderStyle="single" flexDirection="column" paddingX={1}>
+          {(!status?.runningContainers || status.runningContainers.length === 0) ? (
+            <Text dimColor>No running jobs</Text>
+          ) : (
+            status.runningContainers.map((container) => (
+              <Box key={container.name}>
+                <Text color="cyan">{'◐ '}</Text>
+                <Text>{(container.jobId || container.name).padEnd(20)}</Text>
+                <Text dimColor>{container.image}</Text>
+                <Text dimColor>  {container.status}</Text>
+              </Box>
+            ))
+          )}
         </Box>
-      )}
+      </Box>
 
       {/* Recent Executions */}
       <Box flexDirection="column" marginTop={1}>
