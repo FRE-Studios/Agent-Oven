@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/agent-oven.svg)](https://www.npmjs.com/package/agent-oven)
 [![license](https://img.shields.io/npm/l/agent-oven.svg)](https://github.com/FRE-Studios/Agent-Oven/blob/main/LICENSE)
 
-macOS-native job scheduler that runs Docker containers on a schedule using Colima, with an interactive terminal UI for job management.
+Job scheduler that runs Docker containers on a schedule, with an interactive terminal UI for job management. Supports **macOS** (launchd + Colima) and **Linux** (systemd + native Docker).
 
 ## Install
 
@@ -14,7 +14,7 @@ npm install -g agent-oven
 Then run the interactive setup wizard and launch the TUI:
 
 ```bash
-agent-oven init    # one-time setup (installs Colima, Docker, builds images, configures launchd)
+agent-oven init    # one-time setup (installs dependencies, builds images, configures daemon)
 agent-oven         # launch the TUI
 ```
 
@@ -29,11 +29,13 @@ agent-oven run <id>        # run a job immediately
 agent-oven toggle <id>     # enable/disable a job
 agent-oven delete <id>     # delete a job
 agent-oven logs [id]       # view logs (scheduler or job-specific)
-agent-oven status          # system status (Colima, Docker, daemon)
-agent-oven up              # start Colima VM
-agent-oven down            # stop Colima VM
-agent-oven daemon install  # install/reinstall launchd daemon
-agent-oven daemon remove   # remove launchd daemon
+agent-oven status          # system status (runtime, Docker, daemon)
+agent-oven up              # start container runtime + daemon
+agent-oven down            # stop runtime + daemon
+agent-oven daemon status   # check daemon status
+agent-oven daemon start    # start scheduler daemon
+agent-oven daemon stop     # stop scheduler daemon
+agent-oven daemon restart  # restart scheduler daemon
 ```
 
 ### From Source
@@ -50,7 +52,7 @@ npm start      # launch the TUI
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                  TUI (npm start)                        │
+│                  TUI (agent-oven)                        │
 │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────────┐    │
 │  │Dashboard│ │Job List │ │Job Form │ │ Log Viewer  │    │
 │  └─────────┘ └─────────┘ └─────────┘ └─────────────┘    │
@@ -61,41 +63,48 @@ npm start      # launch the TUI
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐   │
 │  │  jobs.ts │ │scheduler │ │docker.ts │ │ config.ts │   │
 │  └──────────┘ └──────────┘ └──────────┘ └───────────┘   │
+│                  ┌──────────────┐                         │
+│                  │ platform.ts  │ (adapter interface)     │
+│                  └──────┬───────┘                         │
+│              ┌──────────┴──────────┐                      │
+│        ┌───────────┐      ┌────────────┐                  │
+│        │  darwin    │      │   linux    │                  │
+│        │ (launchd/ │      │ (systemd/  │                  │
+│        │  Colima)  │      │  native)   │                  │
+│        └───────────┘      └────────────┘                  │
 └─────────────────────────────────────────────────────────┘
                             │
               ┌─────────────┴─────────────┐
               │                           │
         ┌─────────┐                 ┌───────────┐
         │jobs.json│                 │  Docker   │
-        └─────────┘                 │ (Colima)  │
-                                    └───────────┘
-
-┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
-│   launchd       │────▶│ scheduler.sh │────▶│   Docker    │
-│ (60s interval)  │     │   (daemon)   │     │ (via Colima)│
-└─────────────────┘     └──────────────┘     └─────────────┘
+        └─────────┘                 └───────────┘
 ```
 
 ## Prerequisites
 
-- macOS
+**macOS:**
 - [Homebrew](https://brew.sh)
+- Node.js >= 18
+
+**Linux:**
+- Docker (installed and running)
 - Node.js >= 18
 
 ## Setup (Init Wizard)
 
-`npm run init` launches an interactive wizard that walks through the full setup:
+`agent-oven init` launches an interactive wizard that walks through the full setup. The wizard adapts to your platform automatically:
 
-1. **Prerequisites check** — verifies Homebrew, Colima, Docker, and jq are installed
-2. **Dependency installation** — installs any missing dependencies via Homebrew
-3. **Colima VM configuration** — configure CPU, memory, and disk allocation for the VM
-4. **Colima start** — starts the Colima VM with the chosen settings
-5. **Docker verification** — confirms Docker is reachable through Colima
-6. **File setup** — creates `logs/`, `logs/jobs/`, and `jobs.json`
-7. **Image selection** — choose which pre-built Docker images to build
-8. **Image building** — builds the selected Docker images
-9. **Timezone configuration** — detects system timezone with option to override
-10. **Launchd daemon installation** — installs the scheduler as a launchd agent (runs every 60 seconds)
+**Common steps:**
+1. **Prerequisites check** — verifies Docker and required tools are available
+2. **Dependency installation** — installs missing dependencies (Homebrew on macOS; manual guidance on Linux)
+3. **Docker verification** — confirms Docker is reachable
+4. **File setup** — creates `logs/`, `logs/jobs/`, and `jobs.json`
+5. **Image selection & building** — choose and build pre-built Docker images
+6. **Timezone configuration** — detects system timezone with option to override
+7. **Daemon installation** — installs the scheduler daemon (launchd on macOS, systemd user timer on Linux)
+
+**macOS-specific:** Colima VM configuration (CPU, memory, disk) and startup.
 
 Configuration is saved to `~/.config/agent-oven/config.json`.
 
@@ -103,13 +112,13 @@ If any step fails, you can **r**etry, **s**kip, or **q**uit.
 
 ## Usage — The TUI
 
-`npm start` launches the interactive terminal UI. Navigate between screens using keyboard shortcuts.
+`agent-oven` (or `agent-oven tui`) launches the interactive terminal UI. Navigate between screens using keyboard shortcuts.
 
 ### Dashboard
 
 The landing screen. Displays:
 
-- Colima and scheduler daemon status (running/stopped)
+- Runtime and scheduler daemon status (running/stopped)
 - Job summary: total jobs, cron jobs, pending one-time jobs
 - Running containers
 - Last 5 job executions with status
@@ -331,7 +340,7 @@ Supported syntax: wildcards (`*`), intervals (`*/5`), ranges (`9-17`), comma-sep
 
 ## Pre-built Docker Images
 
-Built during `npm run init` from the `images/` directory:
+Built during `agent-oven init` from the `images/` directory:
 
 | Image | Base | Contents |
 |-------|------|----------|
@@ -344,10 +353,15 @@ All images set `TZ=America/Los_Angeles` and use `/workspace` as the working dire
 
 ## How Scheduling Works
 
-The scheduler runs as a macOS launchd daemon that fires every 60 seconds:
+The scheduler daemon fires every 60 seconds via `agent-oven scheduler-tick`:
 
-1. **launchd** triggers `scheduler.sh`
-2. The script reads `jobs.json` and checks if Colima is running (starts it if needed)
+| | macOS | Linux |
+|---|---|---|
+| **Daemon** | launchd plist | systemd user service + timer |
+| **Runtime** | Colima (Docker VM) | Native Docker |
+
+1. The daemon triggers `agent-oven scheduler-tick`
+2. It reads `jobs.json` and ensures Docker is reachable (on macOS, starts Colima if needed)
 3. For each enabled job, it evaluates the schedule against the current time
 4. Matching jobs are executed as Docker containers:
    - **Docker jobs**: run with configured image, command, volumes, env, and resource limits (default: 1 CPU, 512m memory)
@@ -384,9 +398,9 @@ Stored at `~/.config/agent-oven/config.json`:
 | Field | Description |
 |-------|-------------|
 | `projectDir` | Path to the agent-oven project directory |
-| `colima.cpu` | Number of CPUs for the Colima VM |
-| `colima.memory` | Memory in GB for the Colima VM |
-| `colima.disk` | Disk size in GB for the Colima VM |
+| `colima.cpu` | Number of CPUs for the Colima VM (macOS only) |
+| `colima.memory` | Memory in GB for the Colima VM (macOS only) |
+| `colima.disk` | Disk size in GB for the Colima VM (macOS only) |
 | `docker.defaultCpus` | Default CPU limit for Docker jobs |
 | `docker.defaultMemory` | Default memory limit for Docker jobs |
 | `timezone` | Timezone for schedule evaluation |
@@ -417,22 +431,24 @@ The codebase uses TypeScript with strict mode, React 18 + Ink 5 for the TUI, exe
 ```
 agent-oven/
 ├── src/
+│   ├── cli/
+│   │   ├── commands/        # CLI subcommands (status, list, add, run, etc.)
+│   │   └── utils/           # CLI helpers (errors, output, prompts)
 │   ├── core/                # Core library (no UI dependencies)
 │   │   ├── types.ts         # TypeScript interfaces
 │   │   ├── config.ts        # Configuration management
 │   │   ├── jobs.ts          # Job CRUD operations
-│   │   ├── docker.ts        # Docker/Colima execution
-│   │   └── scheduler.ts     # Cron parsing, schedule matching
+│   │   ├── docker.ts        # Docker execution
+│   │   ├── scheduler.ts     # Cron parsing, schedule matching
+│   │   ├── scheduler-runner.ts  # Daemon tick orchestration
+│   │   ├── platform.ts      # Platform adapter interface + factory
+│   │   ├── platform-darwin.ts   # macOS: launchd, Colima, Homebrew
+│   │   └── platform-linux.ts    # Linux: systemd, native Docker
 │   ├── tui/                 # Ink TUI components
 │   │   ├── App.tsx          # Main app with navigation
 │   │   └── components/      # Dashboard, JobList, JobForm, etc.
 │   └── cli.tsx              # Entry point
 ├── images/                  # Dockerfiles for pre-built images
-│   ├── base-tasks/
-│   ├── python-tasks/
-│   ├── node-tasks/
-│   └── pipeline-runner/
-├── scheduler.sh             # Daemon script (called by launchd)
 ├── jobs.json                # Job definitions
 ├── package.json
 └── tsconfig.json

@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
-Agent Oven is a macOS-native job scheduler that runs Docker containers on a schedule using Colima as the container runtime. It features an interactive terminal UI (TUI) built with React/Ink for job management, and a launchd daemon that executes scheduled jobs.
+Agent Oven is a job scheduler that runs Docker containers on a schedule. It features an interactive terminal UI (TUI) built with React/Ink for job management, and a platform-native daemon that executes scheduled jobs.
+
+Supports **macOS** (launchd + Colima) and **Linux** (systemd + native Docker).
 
 **Status:** In Development
 
@@ -14,7 +14,7 @@ Agent Oven is a macOS-native job scheduler that runs Docker containers on a sche
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                  TUI (npm start)                        │
+│                  TUI (agent-oven)                        │
 │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────────┐   │
 │  │Dashboard│ │Job List │ │Job Form │ │ Log Viewer  │   │
 │  └─────────┘ └─────────┘ └─────────┘ └─────────────┘   │
@@ -25,19 +25,17 @@ Agent Oven is a macOS-native job scheduler that runs Docker containers on a sche
 │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐  │
 │  │  jobs.ts │ │scheduler │ │docker.ts │ │ config.ts │  │
 │  └──────────┘ └──────────┘ └──────────┘ └───────────┘  │
+│                  ┌──────────────┐                        │
+│                  │ platform.ts  │ (adapter interface)    │
+│                  └──────┬───────┘                        │
+│              ┌──────────┴──────────┐                     │
+│        ┌─────────────┐   ┌──────────────┐               │
+│        │platform-    │   │platform-     │               │
+│        │darwin.ts    │   │linux.ts      │               │
+│        │(launchd/    │   │(systemd/     │               │
+│        │ Colima/brew)│   │ native docker)│              │
+│        └─────────────┘   └──────────────┘               │
 └─────────────────────────────────────────────────────────┘
-                            │
-              ┌─────────────┴─────────────┐
-              │                           │
-        ┌─────────┐                 ┌───────────┐
-        │jobs.json│                 │  Docker   │
-        └─────────┘                 │ (Colima)  │
-                                    └───────────┘
-
-┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
-│   launchd       │────▶│ scheduler.sh │────▶│   Docker    │
-│ (60s interval)  │     │   (daemon)   │     │ (via Colima)│
-└─────────────────┘     └──────────────┘     └─────────────┘
 ```
 
 ## Project Structure
@@ -45,23 +43,26 @@ Agent Oven is a macOS-native job scheduler that runs Docker containers on a sche
 ```
 agent-oven/
 ├── src/
+│   ├── cli/
+│   │   ├── commands/        # CLI subcommands (status, list, add, run, etc.)
+│   │   └── utils/           # CLI helpers (errors, output, prompts)
 │   ├── core/                # Core library (no UI dependencies)
+│   │   ├── __tests__/       # Unit tests
 │   │   ├── types.ts         # TypeScript interfaces
 │   │   ├── config.ts        # Configuration management
 │   │   ├── jobs.ts          # Job CRUD operations
-│   │   ├── docker.ts        # Docker/Colima execution
-│   │   └── scheduler.ts     # Cron parsing, schedule matching
-│   │
+│   │   ├── docker.ts        # Docker execution
+│   │   ├── scheduler.ts     # Cron parsing, schedule matching
+│   │   ├── scheduler-runner.ts  # Daemon tick orchestration
+│   │   ├── platform.ts      # Platform adapter interface + factory
+│   │   ├── platform-darwin.ts   # macOS: launchd, Colima, Homebrew
+│   │   ├── platform-linux.ts    # Linux: systemd, native Docker
+│   │   └── setup.ts         # Setup wizard logic
 │   ├── tui/                 # Ink TUI components
 │   │   ├── App.tsx          # Main app with navigation
-│   │   └── components/      # Dashboard, JobList, JobForm, etc.
-│   │
-│   └── cli.tsx              # Entry point
-│
-├── dist/                    # Compiled JavaScript
+│   │   └── components/      # Dashboard, JobList, JobForm, LogViewer, InitWizard
+│   └── cli.tsx              # Entry point (routes to commander or TUI)
 ├── images/                  # Dockerfiles for pre-built images
-├── scheduler.sh             # Daemon (called by launchd)
-├── setup.sh                 # Initial setup script
 ├── jobs.json                # Job definitions
 ├── package.json
 └── tsconfig.json
@@ -70,48 +71,42 @@ agent-oven/
 ## Commands
 
 ```bash
-# Initial setup (installs Colima, Docker, builds images, creates launchd agent)
-./setup.sh
+# Launch the interactive TUI (default when no args)
+npm start                    # or: agent-oven / agent-oven tui
 
-# Run the interactive TUI
-npm start
+# Interactive setup wizard
+npm run init                 # or: agent-oven init
 
-# Run the interactive setup 
-npm run init
+# CLI subcommands
+agent-oven status            # System status overview (--json for machine-readable)
+agent-oven list              # List all jobs
+agent-oven add               # Add a new job
+agent-oven show <id>         # Show job details
+agent-oven run <id>          # Run a job immediately
+agent-oven delete <id>       # Delete a job
+agent-oven toggle <id>       # Toggle job enabled/disabled
+agent-oven logs [id]         # View job logs
+agent-oven daemon status|start|stop|restart  # Manage scheduler daemon
+agent-oven up                # Start container runtime + daemon
+agent-oven down              # Stop runtime + daemon
 
-# Development mode with hot reload
-npm run dev
-
-# Build TypeScript
-npm run build
-
-# Type check without building
-npm run typecheck
+# Development
+npm run dev                  # Hot reload
+npm run build                # Build TypeScript
+npm run typecheck            # Type check only
+npm test                     # Run tests (vitest)
 ```
 
-## TUI Keyboard Shortcuts
+## Platform Support
 
-**Dashboard:**
-- `j` - Go to Jobs list
-- `a` - Add new job
-- `l` - View logs
-- `q` - Quit
+| | macOS | Linux |
+|---|---|---|
+| **Daemon** | launchd plist | systemd user service + timer |
+| **Runtime** | Colima (Docker VM) | Native Docker |
+| **Packages** | Homebrew | Manual install |
+| **Scheduler** | `agent-oven scheduler-tick` via launchd | `agent-oven scheduler-tick` via systemd timer |
 
-**Job List:**
-- `↑/↓` or `j/k` - Navigate
-- `Enter` - View job details
-- `r` - Run job now
-- `Space` - Toggle enabled/disabled
-- `d` - Delete job
-- `/` - Filter jobs
-- `Esc` - Back
-
-**Log Viewer:**
-- `↑/↓` - Scroll
-- `f` - Toggle follow mode
-- `g/G` - Go to top/bottom
-- `o` - View older runs
-- `Esc` - Back
+Platform detection is automatic via `getPlatformAdapter()` in `src/core/platform.ts`.
 
 ## Job JSON Structure
 
@@ -131,7 +126,7 @@ npm run typecheck
 
 ## Pre-built Docker Images
 
-Built during `./setup.sh` from `images/` directory:
+Built during `agent-oven init` from `images/` directory:
 
 - **agent-oven/base-tasks**: Alpine with CLI tools (curl, jq, git, rsync, etc.)
 - **agent-oven/python-tasks**: Python 3.12 with AI/data libs (openai, anthropic, langchain, pandas)
@@ -160,5 +155,7 @@ User config stored at `~/.config/agent-oven/config.json` (XDG compliant):
 The codebase uses:
 - **TypeScript** with strict mode
 - **React 18** + **Ink 5** for the TUI
+- **Commander** for CLI subcommands
 - **execa** for shell command execution
+- **vitest** for testing
 - ES modules throughout (`"type": "module"`)

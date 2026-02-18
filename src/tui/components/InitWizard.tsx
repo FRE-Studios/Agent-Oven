@@ -1022,7 +1022,7 @@ function SummaryStep({ items }: { items: { label: string; value: string; ok: boo
       <Box flexDirection="column" marginTop={1}>
         <Text bold>Next steps:</Text>
         <Text dimColor>  Run </Text>
-        <Text color="cyan">  npm start</Text>
+        <Text color="cyan">  agent-oven</Text>
         <Text dimColor>  to open the TUI and manage your jobs.</Text>
       </Box>
 
