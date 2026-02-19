@@ -131,9 +131,9 @@ export function onceShouldRun(datetime: string, lastRun: string | null | undefin
 /**
  * Check if a schedule should run now
  */
-export function shouldRunNow(schedule: Schedule, lastRun?: string | null): boolean {
+export function shouldRunNow(schedule: Schedule, lastRun?: string | null, date?: Date): boolean {
   if (schedule.type === 'cron') {
-    return cronMatches(schedule.cron);
+    return cronMatches(schedule.cron, date);
   } else if (schedule.type === 'once') {
     return onceShouldRun(schedule.datetime, lastRun);
   }

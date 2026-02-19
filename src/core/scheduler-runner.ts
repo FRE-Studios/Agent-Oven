@@ -210,12 +210,13 @@ export async function runSchedulerTick(config: Config): Promise<number> {
   }
 
   // --- Process each job ---
+  const tickTime = new Date();
   for (const job of jobs) {
     // Skip disabled jobs
     if (job.enabled === false) continue;
 
     // Check schedule
-    if (!shouldRunNow(job.schedule, job.last_run)) continue;
+    if (!shouldRunNow(job.schedule, job.last_run, tickTime)) continue;
 
     // Skip if container is already running
     if (await isJobRunning(job.id)) {
