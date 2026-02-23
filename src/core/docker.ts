@@ -372,11 +372,20 @@ async function runPipelineJob(
     }
   }
 
+  // Handle local repo paths: mount the host repo into the container                                    
+  // so the entrypoint can `git clone` from it inside the container.                                    
+  let repoArg = job.source.repo;                                                                        
+  if (repoArg === '.' || repoArg.startsWith('./') || repoArg.startsWith('/')) {                         
+    const absRepo = path.resolve(config.projectDir, repoArg);                                           
+    args.push('-v', `${absRepo}:/workspace/source:ro`);                                                 
+    repoArg = '/workspace/source';                                                                      
+  }                                                                                                     
+
   // Add image
   args.push('agent-oven/pipeline-runner');
 
   // Add entrypoint args: repo, branch, pipeline
-  args.push(job.source.repo);
+  args.push(repoArg);
   args.push(job.source.branch ?? 'main');
   args.push(job.pipeline);
 
