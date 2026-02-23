@@ -144,23 +144,32 @@ ${programArgs}
 
   async getRuntimeStatus(): Promise<RuntimeStatus> {
     try {
-      const { stdout } = await execa('colima', ['status'], { reject: false });
-      const running = stdout.includes('Running') || stdout.includes('is running');
+      const { stdout, stderr } = await execa('colima', ['status'], { reject: false });
+      const output = stdout + '\n' + stderr;
+      const running = output.includes('Running') || output.includes('is running');
 
       if (!running) {
         return { running: false };
       }
 
-      const cpuMatch = stdout.match(/CPU:\s*(\d+)/);
-      const memoryMatch = stdout.match(/Memory:\s*(\d+)/);
-      const diskMatch = stdout.match(/Disk:\s*(\d+)/);
+      // colima list --json provides structured resource info;
+      // colima status only outputs log-style lines without CPU/memory/disk fields.
+      let cpu: number | undefined;
+      let memory: number | undefined;
+      let disk: number | undefined;
+      try {
+        const { stdout: jsonOut } = await execa('colima', ['list', '--json'], { reject: false });
+        if (jsonOut) {
+          const info = JSON.parse(jsonOut);
+          cpu = info.cpu ?? undefined;
+          memory = info.memory ? Math.round(info.memory / (1024 * 1024 * 1024)) : undefined;
+          disk = info.disk ? Math.round(info.disk / (1024 * 1024 * 1024)) : undefined;
+        }
+      } catch {
+        // Resource info is informational only — not critical
+      }
 
-      return {
-        running: true,
-        cpu: cpuMatch ? parseInt(cpuMatch[1], 10) : undefined,
-        memory: memoryMatch ? parseInt(memoryMatch[1], 10) : undefined,
-        disk: diskMatch ? parseInt(diskMatch[1], 10) : undefined,
-      };
+      return { running: true, cpu, memory, disk };
     } catch {
       return { running: false };
     }
