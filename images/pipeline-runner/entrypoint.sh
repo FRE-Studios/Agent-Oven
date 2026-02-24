@@ -43,6 +43,16 @@ echo ""
 # Clone repository
 echo "[clone] Cloning $REPO (branch: $BRANCH)..."
 git clone --branch "$BRANCH" --depth 1 "$REPO" /workspace/repo
+
+# If source was a local path, reconfigure origin to the real GitHub remote
+if [[ "$REPO" == /* ]]; then
+    REMOTE_URL=$(git -C "$REPO" remote get-url origin 2>/dev/null || true)
+    if [ -n "$REMOTE_URL" ]; then
+        echo "[clone] Reconfiguring origin to: $REMOTE_URL"
+        git -C /workspace/repo remote set-url origin "$REMOTE_URL"
+    fi
+fi
+
 cd /workspace/repo
 
 echo "[clone] Done"
