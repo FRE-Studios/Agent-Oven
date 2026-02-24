@@ -134,6 +134,8 @@ ${programArgs}
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>${escapePlistString(os.homedir())}</string>
     </dict>
 </dict>
 </plist>
