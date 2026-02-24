@@ -61,7 +61,7 @@ echo ""
 # Run the pipeline
 echo "[pipeline] Running: agent-pipeline run $PIPELINE"
 echo "---"
-agent-pipeline run "$PIPELINE"
+agent-pipeline run "$PIPELINE" --quiet
 EXIT_CODE=$?
 echo "---"
 echo ""
