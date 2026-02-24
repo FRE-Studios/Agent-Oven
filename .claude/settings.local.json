@@ -4,7 +4,8 @@
       "Bash(npm run build:*)",
       "Bash(ls:*)",
       "Bash(node:*)",
-      "Bash(npx vitest run:*)"
+      "Bash(npx vitest run:*)",
+      "Bash(npm test:*)"
     ]
   },
   "hooks": {

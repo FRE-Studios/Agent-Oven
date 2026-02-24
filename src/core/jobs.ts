@@ -14,6 +14,7 @@ import type {
 } from './types.js';
 import { isDockerJob, isPipelineJob } from './types.js';
 import { getJobsFilePath } from './config.js';
+import { validateRandomWindow } from './scheduler.js';
 
 /**
  * Normalize a legacy job (no `type` field) to a DockerJob.
@@ -204,6 +205,7 @@ export function getJobStats(config: Config): {
   enabled: number;
   cron: number;
   oncePending: number;
+  randomWindow: number;
 } {
   const jobs = listJobs(config);
 
@@ -214,6 +216,7 @@ export function getJobStats(config: Config): {
     oncePending: jobs.filter(
       (j) => j.schedule.type === 'once' && !j.last_run
     ).length,
+    randomWindow: jobs.filter((j) => j.schedule.type === 'random-window').length,
   };
 }
 
@@ -291,6 +294,13 @@ export function validateJob(job: Partial<Job>): string[] {
         if (isNaN(date.getTime())) {
           errors.push('Invalid datetime format');
         }
+      }
+    } else if (job.schedule.type === 'random-window') {
+      if (!job.schedule.start || !job.schedule.end) {
+        errors.push('Start and end times are required for random-window schedule');
+      } else {
+        const rwErr = validateRandomWindow(job.schedule);
+        if (rwErr) errors.push(rwErr);
       }
     }
   }

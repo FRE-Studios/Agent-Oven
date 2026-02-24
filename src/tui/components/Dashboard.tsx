@@ -111,6 +111,8 @@ export function Dashboard({ config, onNavigate }: DashboardProps) {
         <Text dimColor> | </Text>
         <Text>{status?.jobs.cron ?? 0} cron</Text>
         <Text dimColor> | </Text>
+        <Text>{status?.jobs.randomWindow ?? 0} random-window</Text>
+        <Text dimColor> | </Text>
         <Text>{status?.jobs.oncePending ?? 0} pending one-time</Text>
       </Box>
 

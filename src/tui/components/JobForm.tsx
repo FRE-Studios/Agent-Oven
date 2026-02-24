@@ -3,7 +3,8 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import type { Config, Job, DockerJob, Schedule } from '../../core/types.js';
 import { addJob, updateJob, validateJob, getBuiltInImages } from '../../core/jobs.js';
-import { describeCron, validateCron } from '../../core/scheduler.js';
+import { describeCron, validateCron, validateRandomWindow } from '../../core/scheduler.js';
+import type { RandomWindowSchedule } from '../../core/types.js';
 
 interface JobFormProps {
   config: Config;
@@ -12,9 +13,9 @@ interface JobFormProps {
   onCancel: () => void;
 }
 
-type Field = 'id' | 'name' | 'image' | 'command' | 'scheduleType' | 'cron' | 'datetime' | 'volumes' | 'timeout';
+type Field = 'id' | 'name' | 'image' | 'command' | 'scheduleType' | 'cron' | 'datetime' | 'rwStart' | 'rwEnd' | 'rwDays' | 'volumes' | 'timeout';
 
-const FIELDS: Field[] = ['id', 'name', 'image', 'command', 'scheduleType', 'cron', 'datetime', 'volumes', 'timeout'];
+const FIELDS: Field[] = ['id', 'name', 'image', 'command', 'scheduleType', 'cron', 'datetime', 'rwStart', 'rwEnd', 'rwDays', 'volumes', 'timeout'];
 
 export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps) {
   const isEdit = !!existingJob;
@@ -30,7 +31,7 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
       ? existingDocker.command.join(' ')
       : existingDocker?.command ?? ''
   );
-  const [scheduleType, setScheduleType] = useState<'cron' | 'once'>(
+  const [scheduleType, setScheduleType] = useState<'cron' | 'once' | 'random-window'>(
     existingJob?.schedule.type ?? 'cron'
   );
   const [cron, setCron] = useState(
@@ -38,6 +39,15 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
   );
   const [datetime, setDatetime] = useState(
     existingJob?.schedule.type === 'once' ? existingJob.schedule.datetime : ''
+  );
+  const [rwStart, setRwStart] = useState(
+    existingJob?.schedule.type === 'random-window' ? existingJob.schedule.start : '09:00'
+  );
+  const [rwEnd, setRwEnd] = useState(
+    existingJob?.schedule.type === 'random-window' ? existingJob.schedule.end : '10:00'
+  );
+  const [rwDays, setRwDays] = useState(
+    existingJob?.schedule.type === 'random-window' ? (existingJob.schedule.days ?? '*') : '*'
   );
   const [volumes, setVolumes] = useState(existingDocker?.volumes?.join('\n') ?? '');
   const [timeout, setTimeout] = useState(existingDocker?.timeout?.toString() ?? '300');
@@ -51,16 +61,19 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
   const builtInImages = getBuiltInImages();
 
   // Navigate fields
+  const shouldSkipField = useCallback((field: Field): boolean => {
+    if (field === 'cron' && scheduleType !== 'cron') return true;
+    if (field === 'datetime' && scheduleType !== 'once') return true;
+    if ((field === 'rwStart' || field === 'rwEnd' || field === 'rwDays') && scheduleType !== 'random-window') return true;
+    return false;
+  }, [scheduleType]);
+
   const nextField = useCallback(() => {
     const currentIndex = FIELDS.indexOf(activeField);
     let next = currentIndex + 1;
 
-    // Skip cron/datetime based on schedule type
     while (next < FIELDS.length) {
-      const field = FIELDS[next];
-      if (field === 'cron' && scheduleType !== 'cron') {
-        next++;
-      } else if (field === 'datetime' && scheduleType !== 'once') {
+      if (shouldSkipField(FIELDS[next])) {
         next++;
       } else {
         break;
@@ -70,18 +83,14 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
     if (next < FIELDS.length) {
       setActiveField(FIELDS[next]);
     }
-  }, [activeField, scheduleType]);
+  }, [activeField, shouldSkipField]);
 
   const prevField = useCallback(() => {
     const currentIndex = FIELDS.indexOf(activeField);
     let prev = currentIndex - 1;
 
-    // Skip cron/datetime based on schedule type
     while (prev >= 0) {
-      const field = FIELDS[prev];
-      if (field === 'cron' && scheduleType !== 'cron') {
-        prev--;
-      } else if (field === 'datetime' && scheduleType !== 'once') {
+      if (shouldSkipField(FIELDS[prev])) {
         prev--;
       } else {
         break;
@@ -91,16 +100,28 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
     if (prev >= 0) {
       setActiveField(FIELDS[prev]);
     }
-  }, [activeField, scheduleType]);
+  }, [activeField, shouldSkipField]);
 
   // Handle save
   const handleSave = useCallback(() => {
     setError(null);
 
     // Build schedule
-    const schedule: Schedule = scheduleType === 'cron'
-      ? { type: 'cron', cron }
-      : { type: 'once', datetime };
+    let schedule: Schedule;
+    if (scheduleType === 'cron') {
+      schedule = { type: 'cron', cron };
+    } else if (scheduleType === 'random-window') {
+      const rwSchedule: RandomWindowSchedule = { type: 'random-window', start: rwStart, end: rwEnd };
+      if (rwDays && rwDays !== '*') rwSchedule.days = rwDays;
+      const rwErr = validateRandomWindow(rwSchedule);
+      if (rwErr) {
+        setError(rwErr);
+        return;
+      }
+      schedule = rwSchedule;
+    } else {
+      schedule = { type: 'once', datetime };
+    }
 
     // Parse command
     const cmdParts = command.trim().split(/\s+/);
@@ -148,7 +169,7 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save job');
     }
-  }, [config, existingJob, isEdit, id, name, image, command, scheduleType, cron, datetime, volumes, timeout, onSave]);
+  }, [config, existingJob, isEdit, id, name, image, command, scheduleType, cron, datetime, rwStart, rwEnd, rwDays, volumes, timeout, onSave]);
 
   // Handle input
   useInput((input, key) => {
@@ -185,7 +206,7 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
     // Schedule type toggle
     if (activeField === 'scheduleType') {
       if (key.leftArrow || key.rightArrow || input === ' ') {
-        setScheduleType((t) => t === 'cron' ? 'once' : 'cron');
+        setScheduleType((t) => t === 'cron' ? 'random-window' : t === 'random-window' ? 'once' : 'cron');
       } else if (key.return) {
         nextField();
       }
@@ -280,6 +301,10 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
               ({scheduleType === 'cron' ? '●' : '○'}) Cron
             </Text>
             <Text>  </Text>
+            <Text color={scheduleType === 'random-window' ? 'cyan' : undefined}>
+              ({scheduleType === 'random-window' ? '●' : '○'}) Random Window
+            </Text>
+            <Text>  </Text>
             <Text color={scheduleType === 'once' ? 'cyan' : undefined}>
               ({scheduleType === 'once' ? '●' : '○'}) One-time
             </Text>
@@ -315,6 +340,39 @@ export function JobForm({ config, existingJob, onSave, onCancel }: JobFormProps)
               placeholder="2024-12-31T23:59:00"
             />
           </FormField>
+        )}
+
+        {/* Random Window fields */}
+        {scheduleType === 'random-window' && (
+          <>
+            <FormField label="Start" active={activeField === 'rwStart'}>
+              <TextInput
+                value={rwStart}
+                onChange={setRwStart}
+                focus={activeField === 'rwStart'}
+                placeholder="09:00"
+              />
+            </FormField>
+            <FormField label="End" active={activeField === 'rwEnd'}>
+              <TextInput
+                value={rwEnd}
+                onChange={setRwEnd}
+                focus={activeField === 'rwEnd'}
+                placeholder="10:00"
+              />
+            </FormField>
+            <FormField label="Days" active={activeField === 'rwDays'}>
+              <Box>
+                <TextInput
+                  value={rwDays}
+                  onChange={setRwDays}
+                  focus={activeField === 'rwDays'}
+                  placeholder="*"
+                />
+                <Text dimColor> (cron weekday: * or 1-5)</Text>
+              </Box>
+            </FormField>
+          </>
         )}
 
         {/* Volumes */}

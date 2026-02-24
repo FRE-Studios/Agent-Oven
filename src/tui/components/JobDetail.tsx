@@ -201,6 +201,12 @@ export function JobDetail({
         {job.schedule.type === 'cron' && (
           <DetailRow label="Cron" value={job.schedule.cron} />
         )}
+        {job.schedule.type === 'random-window' && (
+          <>
+            <DetailRow label="Window" value={`${job.schedule.start} - ${job.schedule.end}`} />
+            <DetailRow label="Days" value={job.schedule.days ?? '* (every day)'} />
+          </>
+        )}
         {nextRun && (
           <DetailRow label="Next run" value={formatRelativeTime(nextRun)} />
         )}

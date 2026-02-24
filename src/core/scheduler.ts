@@ -2,7 +2,7 @@
  * Scheduler logic - cron parsing and schedule matching
  */
 
-import type { Schedule, CronSchedule, OneTimeSchedule } from './types.js';
+import type { Schedule, CronSchedule, OneTimeSchedule, RandomWindowSchedule } from './types.js';
 
 /**
  * Cron field names for error messages
@@ -129,13 +129,115 @@ export function onceShouldRun(datetime: string, lastRun: string | null | undefin
 }
 
 /**
+ * djb2 hash — returns a non-negative integer for a given seed string.
+ */
+export function deterministicHash(seed: string): number {
+  let hash = 5381;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) + hash + seed.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+/**
+ * Parse an HH:MM string to minutes-from-midnight.
+ */
+export function parseHHMM(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
+}
+
+/**
+ * Check if a random-window schedule should run now.
+ * Uses a deterministic hash of (jobId + date) to pick a consistent minute within the window.
+ */
+export function randomWindowShouldRun(
+  schedule: RandomWindowSchedule,
+  lastRun: string | null | undefined,
+  date: Date,
+  jobId: string,
+): boolean {
+  // Check weekday
+  if (!matchesWeekdayField(schedule.days ?? '*', date.getDay())) {
+    return false;
+  }
+
+  // Skip if already run today
+  if (lastRun) {
+    const lastRunDate = new Date(lastRun);
+    if (
+      lastRunDate.getFullYear() === date.getFullYear() &&
+      lastRunDate.getMonth() === date.getMonth() &&
+      lastRunDate.getDate() === date.getDate()
+    ) {
+      return false;
+    }
+  }
+
+  // Compute window size in minutes (handles midnight-spanning)
+  const startMinutes = parseHHMM(schedule.start);
+  const endMinutes = parseHHMM(schedule.end);
+  const windowSize = endMinutes > startMinutes
+    ? endMinutes - startMinutes
+    : (24 * 60 - startMinutes) + endMinutes;
+
+  if (windowSize <= 0) return false;
+
+  // Deterministic offset from hash
+  const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const offset = deterministicHash(`${jobId}:${dateStr}`) % windowSize;
+  const targetMinutes = (startMinutes + offset) % (24 * 60);
+
+  const targetHour = Math.floor(targetMinutes / 60);
+  const targetMinute = targetMinutes % 60;
+
+  return date.getHours() === targetHour && date.getMinutes() === targetMinute;
+}
+
+/**
+ * Describe a random-window schedule in human-readable form.
+ */
+export function describeRandomWindow(schedule: RandomWindowSchedule): string {
+  const days = schedule.days ?? '*';
+  const prefix = days === '*' ? 'Daily' : `${describeWeekday(days)}`;
+  return `${prefix} randomly between ${schedule.start} and ${schedule.end}`;
+}
+
+/**
+ * Validate a random-window schedule configuration.
+ * Returns an error message string, or null if valid.
+ */
+export function validateRandomWindow(schedule: RandomWindowSchedule): string | null {
+  const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!timeRe.test(schedule.start)) {
+    return `Invalid start time "${schedule.start}" (expected HH:MM in 24-hour format)`;
+  }
+  if (!timeRe.test(schedule.end)) {
+    return `Invalid end time "${schedule.end}" (expected HH:MM in 24-hour format)`;
+  }
+  if (schedule.start === schedule.end) {
+    return 'Start and end times must be different';
+  }
+  if (schedule.days !== undefined && schedule.days !== '*') {
+    // Validate the days field using cron weekday validation (single field from a 5-field expression)
+    const testCron = `0 0 * * ${schedule.days}`;
+    const err = validateCron(testCron);
+    if (err && err.includes('weekday')) return `days: ${err}`;
+  }
+  return null;
+}
+
+/**
  * Check if a schedule should run now
  */
-export function shouldRunNow(schedule: Schedule, lastRun?: string | null, date?: Date): boolean {
+export function shouldRunNow(schedule: Schedule, lastRun?: string | null, date?: Date, jobId?: string): boolean {
   if (schedule.type === 'cron') {
     return cronMatches(schedule.cron, date);
   } else if (schedule.type === 'once') {
     return onceShouldRun(schedule.datetime, lastRun);
+  } else if (schedule.type === 'random-window') {
+    if (!jobId) return false;
+    return randomWindowShouldRun(schedule, lastRun, date ?? new Date(), jobId);
   }
   return false;
 }
@@ -282,6 +384,8 @@ function formatDateTime(date: Date): string {
 export function describeSchedule(schedule: Schedule): string {
   if (schedule.type === 'cron') {
     return describeCron(schedule.cron);
+  } else if (schedule.type === 'random-window') {
+    return describeRandomWindow(schedule);
   } else {
     return describeOnce(schedule.datetime);
   }
@@ -384,6 +488,10 @@ export function getNextRun(schedule: Schedule): Date | null {
   if (schedule.type === 'once') {
     const date = new Date(schedule.datetime);
     return isNaN(date.getTime()) ? null : date;
+  }
+
+  if (schedule.type === 'random-window') {
+    return null; // Can't predict without jobId context
   }
 
   // For cron, find the next matching minute

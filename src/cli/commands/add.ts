@@ -5,9 +5,9 @@
 import type { Command } from 'commander';
 import { requireConfig, handleError } from '../utils/errors.js';
 import { addJob, validateJob } from '../../core/jobs.js';
-import { validateCron } from '../../core/scheduler.js';
+import { validateCron, validateRandomWindow } from '../../core/scheduler.js';
 import { success, error } from '../utils/output.js';
-import type { AddJobOptions, Schedule } from '../../core/types.js';
+import type { AddJobOptions, Schedule, RandomWindowSchedule } from '../../core/types.js';
 
 function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
@@ -24,8 +24,10 @@ export function register(program: Command): void {
     .option('--repo <url>', 'Git repo URL (required for pipeline type)')
     .option('--pipeline <name>', 'Pipeline name (required for pipeline type)')
     .option('--branch <branch>', 'Git branch (default: main)')
-    .option('--schedule <cron>', 'Cron expression (mutually exclusive with --once)')
+    .option('--schedule <cron>', 'Cron expression (mutually exclusive with --once, --random-window)')
     .option('--once <datetime>', 'ISO 8601 datetime for one-time run')
+    .option('--random-window <start-end>', 'Random window in HH:MM-HH:MM format (e.g. 09:30-10:00)')
+    .option('--random-window-days <days>', 'Days for random-window (cron weekday syntax, default: *)')
     .option('-v, --volume <vol>', 'Volume mount (repeatable)', collectRepeatable, [])
     .option('-e, --env <kv>', 'Environment variable KEY=VALUE (repeatable)', collectRepeatable, [])
     .option('--timeout <seconds>', 'Timeout in seconds', parseInt)
@@ -42,6 +44,8 @@ export function register(program: Command): void {
       branch?: string;
       schedule?: string;
       once?: string;
+      randomWindow?: string;
+      randomWindowDays?: string;
       volume: string[];
       env: string[];
       timeout?: number;
@@ -52,13 +56,14 @@ export function register(program: Command): void {
       try {
         const config = requireConfig();
 
-        // Build schedule
-        if (!opts.schedule && !opts.once) {
-          error('Either --schedule or --once is required');
+        // Build schedule — exactly one of --schedule, --once, --random-window required
+        const schedCount = [opts.schedule, opts.once, opts.randomWindow].filter(Boolean).length;
+        if (schedCount === 0) {
+          error('One of --schedule, --once, or --random-window is required');
           process.exit(1);
         }
-        if (opts.schedule && opts.once) {
-          error('--schedule and --once are mutually exclusive');
+        if (schedCount > 1) {
+          error('--schedule, --once, and --random-window are mutually exclusive');
           process.exit(1);
         }
 
@@ -70,6 +75,24 @@ export function register(program: Command): void {
             process.exit(1);
           }
           schedule = { type: 'cron', cron: opts.schedule };
+        } else if (opts.randomWindow) {
+          const rwMatch = opts.randomWindow.match(/^(\d{2}:\d{2})-(\d{2}:\d{2})$/);
+          if (!rwMatch) {
+            error('Invalid --random-window format (expected HH:MM-HH:MM)');
+            process.exit(1);
+          }
+          const rwSchedule: RandomWindowSchedule = {
+            type: 'random-window',
+            start: rwMatch[1],
+            end: rwMatch[2],
+            ...(opts.randomWindowDays ? { days: opts.randomWindowDays } : {}),
+          };
+          const rwErr = validateRandomWindow(rwSchedule);
+          if (rwErr) {
+            error(`Invalid random-window: ${rwErr}`);
+            process.exit(1);
+          }
+          schedule = rwSchedule;
         } else {
           const d = new Date(opts.once!);
           if (isNaN(d.getTime())) {

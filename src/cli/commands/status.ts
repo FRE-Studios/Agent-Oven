@@ -51,7 +51,7 @@ export function register(program: Command): void {
 
         // Jobs
         const j = status.jobs;
-        console.log(`  Jobs:         ${j.total} total, ${j.enabled} enabled, ${j.cron} cron, ${j.oncePending} pending`);
+        console.log(`  Jobs:         ${j.total} total, ${j.enabled} enabled, ${j.cron} cron, ${j.randomWindow} random-window, ${j.oncePending} pending`);
 
         // Running containers
         if (status.runningContainers.length > 0) {

@@ -184,6 +184,8 @@ function JobRow({ job, selected, running }: JobRowProps) {
   const enabled = job.enabled !== false;
   const scheduleDesc = job.schedule.type === 'cron'
     ? job.schedule.cron
+    : job.schedule.type === 'random-window'
+    ? `~${job.schedule.start}-${job.schedule.end}`
     : 'one-time';
 
   return (

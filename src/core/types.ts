@@ -16,7 +16,18 @@ export interface OneTimeSchedule {
   datetime: string;
 }
 
-export type Schedule = CronSchedule | OneTimeSchedule;
+/** Random-window schedule - runs once per day at a random time within a window */
+export interface RandomWindowSchedule {
+  type: 'random-window';
+  /** Window start time in HH:MM 24-hour format */
+  start: string;
+  /** Window end time in HH:MM 24-hour format */
+  end: string;
+  /** Days of week using cron weekday syntax (0=Sun..6=Sat, 7=Sun), defaults to '*' */
+  days?: string;
+}
+
+export type Schedule = CronSchedule | OneTimeSchedule | RandomWindowSchedule;
 
 /** Environment variables for a job */
 export type EnvVars = Record<string, string>;
@@ -201,6 +212,7 @@ export interface SystemStatus {
     enabled: number;
     cron: number;
     oncePending: number;
+    randomWindow: number;
   };
   runningContainers: RunningContainer[];
   recentExecutions: JobLogEntry[];

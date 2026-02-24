@@ -189,6 +189,31 @@ describe('validateJob', () => {
     expect(errors).toEqual([]);
   });
 
+  // Random-window schedule validation
+  it('accepts valid random-window schedule', () => {
+    const errors = validateJob({
+      ...validDockerJob,
+      schedule: { type: 'random-window', start: '09:00', end: '10:00' } as any,
+    });
+    expect(errors).toEqual([]);
+  });
+
+  it('reports missing start/end for random-window schedule', () => {
+    const errors = validateJob({
+      ...validDockerJob,
+      schedule: { type: 'random-window', start: '', end: '10:00' } as any,
+    });
+    expect(errors.some((e) => e.includes('Start and end times are required'))).toBe(true);
+  });
+
+  it('reports invalid start time for random-window', () => {
+    const errors = validateJob({
+      ...validDockerJob,
+      schedule: { type: 'random-window', start: '25:00', end: '10:00' } as any,
+    });
+    expect(errors.some((e) => e.includes('Invalid start time'))).toBe(true);
+  });
+
   // Multiple errors at once
   it('accumulates multiple errors', () => {
     const errors = validateJob({ type: 'docker' } as Partial<DockerJob>);
@@ -429,7 +454,7 @@ describe('getJobStats', () => {
 
   it('returns all zeros for empty list', () => {
     mockJobsFile([]);
-    expect(getJobStats(config)).toEqual({ total: 0, enabled: 0, cron: 0, oncePending: 0 });
+    expect(getJobStats(config)).toEqual({ total: 0, enabled: 0, cron: 0, oncePending: 0, randomWindow: 0 });
   });
 
   it('counts mixed jobs correctly', () => {
@@ -444,5 +469,18 @@ describe('getJobStats', () => {
     expect(stats.enabled).toBe(3); // j1, j3, j4 (enabled !== false)
     expect(stats.cron).toBe(2);    // j1, j2
     expect(stats.oncePending).toBe(1); // j3 (once + no last_run)
+    expect(stats.randomWindow).toBe(0);
+  });
+
+  it('counts random-window jobs', () => {
+    mockJobsFile([
+      makeDockerJob({ id: 'j1', schedule: { type: 'cron', cron: '0 * * * *' } }),
+      makeDockerJob({ id: 'j2', schedule: { type: 'random-window', start: '09:00', end: '10:00' } as any }),
+      makeDockerJob({ id: 'j3', schedule: { type: 'random-window', start: '14:00', end: '15:00' } as any }),
+    ]);
+    const stats = getJobStats(config);
+    expect(stats.total).toBe(3);
+    expect(stats.cron).toBe(1);
+    expect(stats.randomWindow).toBe(2);
   });
 });
