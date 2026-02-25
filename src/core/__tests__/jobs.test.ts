@@ -438,12 +438,12 @@ describe('updateLastRun', () => {
     expect(result.last_run).toBe('2025-01-15T12:00:00');
   });
 
-  it('generates ISO timestamp without ms when no timestamp given', () => {
+  it('generates UTC ISO timestamp without ms when no timestamp given', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-06-15T10:30:00.000Z'));
     mockJobsFile([makeDockerJob({ id: 'lr' })]);
     const result = updateLastRun(config, 'lr');
-    expect(result.last_run).toBe('2025-06-15T10:30:00');
+    expect(result.last_run).toBe('2025-06-15T10:30:00Z');
   });
 });
 

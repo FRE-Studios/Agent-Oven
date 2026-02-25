@@ -193,7 +193,7 @@ export function toggleJob(config: Config, jobId: string): Job {
  * Update a job's last_run timestamp
  */
 export function updateLastRun(config: Config, jobId: string, timestamp?: string): Job {
-  const ts = timestamp ?? new Date().toISOString().split('.')[0];
+  const ts = timestamp ?? new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   return updateJob(config, jobId, { last_run: ts });
 }
 

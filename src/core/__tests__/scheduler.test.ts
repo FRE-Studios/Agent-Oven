@@ -13,6 +13,7 @@ import {
   describeRandomWindow,
   deterministicHash,
   parseHHMM,
+  parseStoredTimestamp,
 } from '../scheduler.js';
 import type { RandomWindowSchedule } from '../types.js';
 
@@ -673,6 +674,16 @@ describe('parseHHMM', () => {
   });
 });
 
+describe('parseStoredTimestamp', () => {
+  it('treats legacy timezone-less timestamps as UTC', () => {
+    expect(parseStoredTimestamp('2025-06-15T10:30:00').toISOString()).toBe('2025-06-15T10:30:00.000Z');
+  });
+
+  it('preserves explicit timezone offsets', () => {
+    expect(parseStoredTimestamp('2025-06-15T10:30:00-05:00').toISOString()).toBe('2025-06-15T15:30:00.000Z');
+  });
+});
+
 // ─── randomWindowShouldRun ──────────────────────────────────
 
 describe('randomWindowShouldRun', () => {
@@ -686,16 +697,20 @@ describe('randomWindowShouldRun', () => {
   });
 
   it('different dates produce different target minutes (most of the time)', () => {
-    // Test across many dates — at least one should differ in target minute
-    const results: boolean[] = [];
+    const targetMinutes: number[] = [];
     for (let d = 1; d <= 30; d++) {
-      const date = new Date(`2025-06-${String(d).padStart(2, '0')}T09:30:00`);
-      results.push(randomWindowShouldRun(schedule, null, date, 'test-job'));
+      let targetMinute: number | null = null;
+      for (let m = 0; m < 60; m++) {
+        const date = new Date(`2025-06-${String(d).padStart(2, '0')}T09:${String(m).padStart(2, '0')}:00`);
+        if (randomWindowShouldRun(schedule, null, date, 'test-job')) {
+          targetMinute = m;
+          break;
+        }
+      }
+      expect(targetMinute).not.toBeNull();
+      targetMinutes.push(targetMinute!);
     }
-    // Not all should be the same (statistically impossible with 60-min window and 30 days)
-    const trues = results.filter(Boolean).length;
-    const falses = results.filter((r) => !r).length;
-    expect(trues + falses).toBe(30);
+    expect(new Set(targetMinutes).size).toBeGreaterThan(1);
   });
 
   it('different jobIds produce different target minutes for the same date', () => {
@@ -830,6 +845,16 @@ describe('validateRandomWindow', () => {
 
   it('reports invalid days', () => {
     const result = validateRandomWindow({ type: 'random-window', start: '09:00', end: '10:00', days: '8' });
+    expect(result).toContain('days');
+  });
+
+  it('rejects malformed days with trailing characters', () => {
+    const result = validateRandomWindow({ type: 'random-window', start: '09:00', end: '10:00', days: '1x' });
+    expect(result).toContain('days');
+  });
+
+  it('rejects malformed days with spaces', () => {
+    const result = validateRandomWindow({ type: 'random-window', start: '09:00', end: '10:00', days: '1 2' });
     expect(result).toContain('days');
   });
 

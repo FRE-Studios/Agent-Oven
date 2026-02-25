@@ -8,6 +8,7 @@ import type { Schedule, CronSchedule, OneTimeSchedule, RandomWindowSchedule } fr
  * Cron field names for error messages
  */
 const CRON_FIELDS = ['minute', 'hour', 'day', 'month', 'weekday'] as const;
+const LEGACY_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
 
 /**
  * Parse a cron field value and check if it matches the current value
@@ -52,8 +53,8 @@ function matchesCronField(field: string, currentValue: number): boolean {
   }
 
   // Exact value
-  const exactValue = parseInt(field, 10);
-  if (!isNaN(exactValue)) {
+  if (/^\d+$/.test(field)) {
+    const exactValue = Number(field);
     return currentValue === exactValue;
   }
 
@@ -148,6 +149,16 @@ export function parseHHMM(time: string): number {
 }
 
 /**
+ * Parse stored timestamps. Legacy values without timezone are treated as UTC.
+ */
+export function parseStoredTimestamp(timestamp: string): Date {
+  const normalized = LEGACY_UTC_TIMESTAMP_RE.test(timestamp)
+    ? `${timestamp}Z`
+    : timestamp;
+  return new Date(normalized);
+}
+
+/**
  * Check if a random-window schedule should run now.
  * Uses a deterministic hash of (jobId + date) to pick a consistent minute within the window.
  */
@@ -164,13 +175,15 @@ export function randomWindowShouldRun(
 
   // Skip if already run today
   if (lastRun) {
-    const lastRunDate = new Date(lastRun);
-    if (
-      lastRunDate.getFullYear() === date.getFullYear() &&
-      lastRunDate.getMonth() === date.getMonth() &&
-      lastRunDate.getDate() === date.getDate()
-    ) {
-      return false;
+    const lastRunDate = parseStoredTimestamp(lastRun);
+    if (!isNaN(lastRunDate.getTime())) {
+      if (
+        lastRunDate.getFullYear() === date.getFullYear() &&
+        lastRunDate.getMonth() === date.getMonth() &&
+        lastRunDate.getDate() === date.getDate()
+      ) {
+        return false;
+      }
     }
   }
 
@@ -222,7 +235,7 @@ export function validateRandomWindow(schedule: RandomWindowSchedule): string | n
     // Validate the days field using cron weekday validation (single field from a 5-field expression)
     const testCron = `0 0 * * ${schedule.days}`;
     const err = validateCron(testCron);
-    if (err && err.includes('weekday')) return `days: ${err}`;
+    if (err) return `days: ${err}`;
   }
   return null;
 }
@@ -440,9 +453,16 @@ function validateCronField(field: string, min: number, max: number): string | nu
 
   // Handle step values
   if (field.includes('/')) {
-    const [range, step] = field.split('/');
-    const stepNum = parseInt(step, 10);
-    if (isNaN(stepNum) || stepNum < 1) {
+    const stepParts = field.split('/');
+    if (stepParts.length !== 2) {
+      return `Invalid step expression: ${field}`;
+    }
+    const [range, step] = stepParts;
+    if (!/^\d+$/.test(step)) {
+      return `Invalid step value: ${step}`;
+    }
+    const stepNum = Number(step);
+    if (stepNum < 1) {
       return `Invalid step value: ${step}`;
     }
     if (range !== '*') {
@@ -453,10 +473,12 @@ function validateCronField(field: string, min: number, max: number): string | nu
 
   // Handle ranges
   if (field.includes('-')) {
-    const [start, end] = field.split('-').map((s) => parseInt(s, 10));
-    if (isNaN(start) || isNaN(end)) {
+    const rangeMatch = field.match(/^(\d+)-(\d+)$/);
+    if (!rangeMatch) {
       return `Invalid range: ${field}`;
     }
+    const start = Number(rangeMatch[1]);
+    const end = Number(rangeMatch[2]);
     if (start < min || start > max) {
       return `Start value ${start} out of range (${min}-${max})`;
     }
@@ -470,10 +492,10 @@ function validateCronField(field: string, min: number, max: number): string | nu
   }
 
   // Handle single value
-  const value = parseInt(field, 10);
-  if (isNaN(value)) {
+  if (!/^\d+$/.test(field)) {
     return `Invalid value: ${field}`;
   }
+  const value = Number(field);
   if (value < min || value > max) {
     return `Value ${value} out of range (${min}-${max})`;
   }
