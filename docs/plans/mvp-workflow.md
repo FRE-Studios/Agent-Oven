@@ -309,7 +309,7 @@ exit $EXIT_CODE
 ```bash
 docker run --rm \
   --name "oven-nightly-code-review" \
-  -v ~/.claude:/root/.claude:ro \
+  -v ~/.claude:/root/.claude \
   -v ~/.config/gh:/root/.config/gh:ro \
   --cpus 2 \
   --memory 2g \
@@ -455,7 +455,7 @@ Build the container image and auth mount system — the execution core.
 - [ ] **Build integration** — Add `images/pipeline-runner/` to `setup.sh` build step
 - [ ] **Auth Mount Manager** (`src/core/auth.ts`)
   - [ ] Resolve auth mode (`host-login` vs `api-key`) per job
-  - [ ] For `host-login`: generate `-v ~/.claude:/root/.claude:ro` and `-v ~/.config/gh:/root/.config/gh:ro` Docker args
+  - [ ] For `host-login`: generate `-v ~/.claude:/root/.claude` and `-v ~/.config/gh:/root/.config/gh:ro` Docker args
   - [ ] For `api-key`: generate `-e ANTHROPIC_API_KEY=... -e GITHUB_TOKEN=...` Docker args
 - [ ] **Auth Health Check** (`src/core/auth.ts`)
   - [ ] Pre-flight: verify credential paths exist and are non-empty

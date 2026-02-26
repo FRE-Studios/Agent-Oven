@@ -92,8 +92,8 @@ describe('generateAuthArgs', () => {
     const result = generateAuthArgs('host-login', config);
 
     expect(result.volumes).toEqual([
-      '/home/user/.claude:/root/.claude:ro',
-      '/home/user/.claude.json:/root/.claude.json:ro',
+      '/home/user/.claude:/root/.claude',
+      '/home/user/.claude.json:/root/.claude.json',
       '/home/user/.config/gh:/root/.config/gh:ro',
     ]);
     expect(result.envVars).toEqual({});
@@ -111,7 +111,7 @@ describe('generateAuthArgs', () => {
     const result = generateAuthArgs('host-login', config);
 
     expect(result.volumes).toEqual([
-      '/home/user/.claude:/root/.claude:ro',
+      '/home/user/.claude:/root/.claude',
       '/home/user/.config/gh:/root/.config/gh:ro',
     ]);
   });
@@ -125,7 +125,7 @@ describe('generateAuthArgs', () => {
 
     const result = generateAuthArgs('host-login', config);
 
-    expect(result.volumes).toEqual(['/home/user/.claude:/root/.claude:ro']);
+    expect(result.volumes).toEqual(['/home/user/.claude:/root/.claude']);
     expect(result.envVars).toEqual({});
   });
 

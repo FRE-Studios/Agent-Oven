@@ -26,6 +26,9 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # Install claude-code and agent-pipeline globally
 RUN npm install -g @anthropic-ai/claude-code agent-pipeline
 
+# Stub managed-settings so Claude Code doesn't crash with ENOENT on /etc/claude-code/managed-settings.json
+RUN mkdir -p /etc/claude-code && echo '{}' > /etc/claude-code/managed-settings.json
+
 # Git config for automated commits
 RUN git config --global user.name "Agent Oven" \
     && git config --global user.email "agent-oven@localhost"

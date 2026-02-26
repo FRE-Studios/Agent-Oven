@@ -41,16 +41,19 @@ export function generateAuthArgs(
   const envVars: Record<string, string> = {};
 
   if (authMode === 'host-login') {
-    // Mount credential directories as read-only
+    // Mount credential directories
+    // .claude and .claude.json need read-write: Claude Code writes debug logs,
+    // task tracking, and uses atomic-rename on .claude.json
+    // .config/gh is read-only: gh CLI only reads credentials
     const claudePath = authConfig.claudeCredPath;
     const claudeJsonPath = `${claudePath}.json`; // ~/.claude.json (sibling config file)
     const ghPath = authConfig.ghCredPath;
 
     if (fs.existsSync(claudePath)) {
-      volumes.push(`${claudePath}:/root/.claude:ro`);
+      volumes.push(`${claudePath}:/root/.claude`);
     }
     if (fs.existsSync(claudeJsonPath)) {
-      volumes.push(`${claudeJsonPath}:/root/.claude.json:ro`);
+      volumes.push(`${claudeJsonPath}:/root/.claude.json`);
     }
     if (fs.existsSync(ghPath)) {
       volumes.push(`${ghPath}:/root/.config/gh:ro`);

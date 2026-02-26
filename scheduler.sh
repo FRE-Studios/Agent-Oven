@@ -274,9 +274,14 @@ run_pipeline_job() {
     # Add resource limits (default 2 CPU / 2g for pipelines)
     docker_args+=(--cpus=2 --memory=2g)
 
-    # Mount auth credentials (read-only)
+    # Mount auth credentials
+    # .claude and .claude.json need read-write (Claude Code writes debug logs, task tracking, atomic-rename on .claude.json)
+    # .config/gh is read-only (gh CLI only reads credentials)
     if [ -d "$HOME/.claude" ]; then
-        docker_args+=(-v "$HOME/.claude:/root/.claude:ro")
+        docker_args+=(-v "$HOME/.claude:/root/.claude")
+    fi
+    if [ -f "$HOME/.claude.json" ]; then
+        docker_args+=(-v "$HOME/.claude.json:/root/.claude.json")
     fi
     if [ -d "$HOME/.config/gh" ]; then
         docker_args+=(-v "$HOME/.config/gh:/root/.config/gh:ro")
