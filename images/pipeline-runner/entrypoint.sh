@@ -25,9 +25,20 @@ echo ""
 # Validate Claude authentication
 if [ -d "/root/.claude" ] || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     echo "[auth] Claude credentials found"
+    # Ensure ~/.claude.json exists (required by newer Claude Code versions)
+    if [ ! -f "/root/.claude.json" ]; then
+        # Try to restore from backups if available
+        BACKUP=$(find /root/.claude/backups -name "*.claude.json" -type f 2>/dev/null | sort -r | head -1)
+        if [ -n "$BACKUP" ]; then
+            echo "[auth] Restoring .claude.json from backup: $BACKUP"
+            cp "$BACKUP" /root/.claude.json
+        else
+            echo "[auth] WARNING: /root/.claude.json not found (mount ~/.claude.json or ensure it exists)"
+        fi
+    fi
 else
     echo "[auth] WARNING: No Claude credentials detected"
-    echo "  Mount ~/.claude or set ANTHROPIC_API_KEY"
+    echo "  Mount ~/.claude and ~/.claude.json, or set ANTHROPIC_API_KEY"
 fi
 
 # Validate GitHub authentication

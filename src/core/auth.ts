@@ -43,10 +43,14 @@ export function generateAuthArgs(
   if (authMode === 'host-login') {
     // Mount credential directories as read-only
     const claudePath = authConfig.claudeCredPath;
+    const claudeJsonPath = `${claudePath}.json`; // ~/.claude.json (sibling config file)
     const ghPath = authConfig.ghCredPath;
 
     if (fs.existsSync(claudePath)) {
       volumes.push(`${claudePath}:/root/.claude:ro`);
+    }
+    if (fs.existsSync(claudeJsonPath)) {
+      volumes.push(`${claudeJsonPath}:/root/.claude.json:ro`);
     }
     if (fs.existsSync(ghPath)) {
       volumes.push(`${ghPath}:/root/.config/gh:ro`);
