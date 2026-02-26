@@ -318,8 +318,9 @@ async function runPipelineJob(
   const authConfig = config.auth ?? DEFAULT_AUTH_CONFIG;
 
   // Validate auth requirements
+  let authWarnings: string[] = [];
   try {
-    validateAuthForJob(job, authConfig);
+    authWarnings = validateAuthForJob(job, authConfig);
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     fs.writeFileSync(logFile, [
@@ -399,6 +400,7 @@ async function runPipelineJob(
     `=== Pipeline: ${job.pipeline} ===`,
     `=== Repo: ${job.source.repo} (${job.source.branch ?? 'main'}) ===`,
     `=== Auth: ${authMode} ===`,
+    ...authWarnings.map((w) => `=== WARNING: ${w} ===`),
     `=== Started: ${new Date().toISOString()} ===`,
     `=== Command: docker ${args.join(' ')} ===`,
     '',

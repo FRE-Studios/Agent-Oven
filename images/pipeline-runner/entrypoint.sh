@@ -28,7 +28,7 @@ if [ -d "/root/.claude" ] || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     # Ensure ~/.claude.json exists (required by newer Claude Code versions)
     if [ ! -f "/root/.claude.json" ]; then
         # Try to restore from backups if available
-        BACKUP=$(find /root/.claude/backups -name "*.claude.json" -type f 2>/dev/null | sort -r | head -1)
+        BACKUP=$(find /root/.claude/backups -name ".claude.json.backup.*" -type f 2>/dev/null | sort -r | head -1)
         if [ -n "$BACKUP" ]; then
             echo "[auth] Restoring .claude.json from backup: $BACKUP"
             cp "$BACKUP" /root/.claude.json

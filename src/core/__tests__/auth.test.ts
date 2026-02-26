@@ -80,7 +80,26 @@ describe('generateAuthArgs', () => {
     process.env = savedEnv;
   });
 
-  it('host-login: mounts both dirs when both paths exist', () => {
+  it('host-login: mounts both dirs and .claude.json when all exist', () => {
+    const config = makeAuthConfig({
+      claudeCredPath: '/home/user/.claude',
+      ghCredPath: '/home/user/.config/gh',
+    });
+    vi.mocked(fs.existsSync).mockImplementation(
+      (p) => p === '/home/user/.claude' || p === '/home/user/.claude.json' || p === '/home/user/.config/gh',
+    );
+
+    const result = generateAuthArgs('host-login', config);
+
+    expect(result.volumes).toEqual([
+      '/home/user/.claude:/root/.claude:ro',
+      '/home/user/.claude.json:/root/.claude.json:ro',
+      '/home/user/.config/gh:/root/.config/gh:ro',
+    ]);
+    expect(result.envVars).toEqual({});
+  });
+
+  it('host-login: mounts claude dir without .claude.json when json file missing', () => {
     const config = makeAuthConfig({
       claudeCredPath: '/home/user/.claude',
       ghCredPath: '/home/user/.config/gh',
@@ -95,7 +114,6 @@ describe('generateAuthArgs', () => {
       '/home/user/.claude:/root/.claude:ro',
       '/home/user/.config/gh:/root/.config/gh:ro',
     ]);
-    expect(result.envVars).toEqual({});
   });
 
   it('host-login: mounts only claude when gh path missing', () => {
@@ -164,7 +182,7 @@ describe('checkAuthHealth', () => {
     vi.resetAllMocks();
   });
 
-  it('reports both healthy when paths are valid non-empty dirs', () => {
+  it('reports both healthy when paths are valid non-empty dirs and .claude.json exists', () => {
     const config = makeAuthConfig({
       claudeCredPath: '/home/.claude',
       ghCredPath: '/home/.config/gh',
@@ -178,8 +196,27 @@ describe('checkAuthHealth', () => {
 
     expect(health.claude.available).toBe(true);
     expect(health.claude.error).toBeUndefined();
+    expect(health.claude.warning).toBeUndefined();
     expect(health.github.available).toBe(true);
     expect(health.github.error).toBeUndefined();
+  });
+
+  it('warns when claude dir is healthy but .claude.json is missing', () => {
+    const config = makeAuthConfig({
+      claudeCredPath: '/home/.claude',
+      ghCredPath: '/home/.config/gh',
+    });
+
+    vi.mocked(fs.existsSync).mockImplementation(
+      (p) => p !== '/home/.claude.json',
+    );
+    vi.mocked(fs.statSync).mockReturnValue({ isDirectory: () => true } as any);
+    vi.mocked(fs.readdirSync).mockReturnValue(['credentials.json'] as any);
+
+    const health = checkAuthHealth(config);
+
+    expect(health.claude.available).toBe(true);
+    expect(health.claude.warning).toContain('.claude.json');
   });
 
   it('reports not found when paths do not exist', () => {
@@ -248,6 +285,20 @@ describe('validateAuthForJob', () => {
     vi.mocked(fs.readdirSync).mockReturnValue(['file'] as any);
 
     expect(() => validateAuthForJob(job, config)).not.toThrow();
+    expect(validateAuthForJob(job, config)).toEqual([]);
+  });
+
+  it('host-login: returns warning when .claude.json is missing', () => {
+    const job = makePipelineJob({ auth: 'host-login' });
+    const config = makeAuthConfig({ claudeCredPath: '/home/.claude' });
+
+    vi.mocked(fs.existsSync).mockImplementation((p) => p !== '/home/.claude.json');
+    vi.mocked(fs.statSync).mockReturnValue({ isDirectory: () => true } as any);
+    vi.mocked(fs.readdirSync).mockReturnValue(['file'] as any);
+
+    const warnings = validateAuthForJob(job, config);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('.claude.json');
   });
 
   it('host-login: throws when credential paths missing', () => {

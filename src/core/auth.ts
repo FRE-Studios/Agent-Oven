@@ -17,8 +17,8 @@ export const DEFAULT_AUTH_CONFIG: AuthConfig = {
 
 /** Health status for individual credentials */
 export interface AuthHealthStatus {
-  claude: { available: boolean; error?: string };
-  github: { available: boolean; error?: string };
+  claude: { available: boolean; error?: string; warning?: string };
+  github: { available: boolean; error?: string; warning?: string };
 }
 
 /**
@@ -76,10 +76,16 @@ export function generateAuthArgs(
  */
 export function checkAuthHealth(authConfig: AuthConfig): AuthHealthStatus {
   const claudePath = authConfig.claudeCredPath;
+  const claudeJsonPath = `${claudePath}.json`;
   const ghPath = authConfig.ghCredPath;
 
   const claude = checkCredentialPath(claudePath, 'Claude');
   const github = checkCredentialPath(ghPath, 'GitHub CLI');
+
+  // Warn if ~/.claude dir is healthy but ~/.claude.json is missing
+  if (claude.available && !fs.existsSync(claudeJsonPath)) {
+    claude.warning = `Claude config file not found: ${claudeJsonPath} (required by newer Claude Code versions)`;
+  }
 
   return { claude, github };
 }
@@ -87,7 +93,7 @@ export function checkAuthHealth(authConfig: AuthConfig): AuthHealthStatus {
 function checkCredentialPath(
   credPath: string,
   label: string,
-): { available: boolean; error?: string } {
+): { available: boolean; error?: string; warning?: string } {
   if (!fs.existsSync(credPath)) {
     return { available: false, error: `${label} credential path not found: ${credPath}` };
   }
@@ -112,9 +118,11 @@ function checkCredentialPath(
 /**
  * Validate that auth requirements are met for a pipeline job.
  * Throws if credentials are missing for the resolved auth mode.
+ * Returns an array of non-fatal warnings (e.g. missing ~/.claude.json).
  */
-export function validateAuthForJob(job: PipelineJob, authConfig: AuthConfig): void {
+export function validateAuthForJob(job: PipelineJob, authConfig: AuthConfig): string[] {
   const mode = resolveAuthMode(job, authConfig);
+  const warnings: string[] = [];
 
   if (mode === 'host-login') {
     const health = checkAuthHealth(authConfig);
@@ -122,6 +130,8 @@ export function validateAuthForJob(job: PipelineJob, authConfig: AuthConfig): vo
 
     if (!health.claude.available) {
       errors.push(health.claude.error ?? 'Claude credentials not available');
+    } else if (health.claude.warning) {
+      warnings.push(health.claude.warning);
     }
     if (!health.github.available) {
       errors.push(health.github.error ?? 'GitHub credentials not available');
@@ -146,4 +156,6 @@ export function validateAuthForJob(job: PipelineJob, authConfig: AuthConfig): vo
       throw new Error(`Auth validation failed for job "${job.id}":\n  ${errors.join('\n  ')}`);
     }
   }
+
+  return warnings;
 }
