@@ -1,11 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run build:*)",
       "Bash(ls:*)",
       "Bash(node:*)",
       "Bash(npx vitest run:*)",
-      "Bash(npm test:*)"
+      "Bash(npm test:*)",
+      "Bash(npm run:*)",
+      "Bash(docker ps:*)",
+      "Bash(agent-pipeline:*)"
     ]
   },
   "hooks": {

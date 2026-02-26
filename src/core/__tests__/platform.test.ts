@@ -117,9 +117,18 @@ describe('DarwinAdapter', () => {
 
   describe('getRuntimeStatus', () => {
     it('returns running: true when colima is running', async () => {
-      mockedExeca.mockResolvedValue({
-        stdout: 'INFO[0000] colima is Running\nCPU: 4\nMemory: 8\nDisk: 60',
-      } as any);
+      mockedExeca
+        .mockResolvedValueOnce({
+          stdout: 'INFO[0000] colima is Running',
+          stderr: '',
+        } as any)
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify({
+            cpu: 4,
+            memory: 8 * 1024 * 1024 * 1024,
+            disk: 60 * 1024 * 1024 * 1024,
+          }),
+        } as any);
       const status = await adapter.getRuntimeStatus();
       expect(status.running).toBe(true);
       expect(status.cpu).toBe(4);
