@@ -4,6 +4,7 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type {
@@ -180,6 +181,51 @@ export async function runJob(
 }
 
 /**
+ * Escape a string for safe use as a POSIX shell argument.
+ */
+function shellEscape(arg: string): string {
+  return "'" + arg.replace(/'/g, "'\\''") + "'";
+}
+
+/**
+ * Spawn a detached Docker process that streams output to a log file.
+ * The parent process can exit immediately; the Docker container
+ * continues running with stdout/stderr flowing to the log.
+ * When the container exits, finish markers and exit code are appended.
+ */
+function spawnDetachedDockerRun(
+  args: string[],
+  logFile: string,
+): JobRunResult {
+  const logFd = fs.openSync(logFile, 'a');
+
+  const dockerCmd = ['docker', ...args].map(shellEscape).join(' ');
+
+  // Run docker in foreground inside a detached shell.
+  // After docker exits, append finish markers with the exit code.
+  const script = [
+    dockerCmd,
+    'EC=$?',
+    `printf '\\n=== Finished: %s ===\\n=== Exit Code: %d ===\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$EC"`,
+  ].join('\n');
+
+  const child = spawn('sh', ['-c', script], {
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
+  });
+
+  child.unref();
+  fs.closeSync(logFd);
+
+  return {
+    success: true,
+    exitCode: 0,
+    logFile,
+    output: 'Job started in background',
+  };
+}
+
+/**
  * Run a Docker container job.
  */
 async function runDockerJob(
@@ -236,27 +282,7 @@ async function runDockerJob(
   fs.writeFileSync(logFile, logHeader);
 
   if (options.detach) {
-    const dockerArgs = [...args];
-    dockerArgs.splice(1, 0, '-d');
-
-    try {
-      await execa('docker', dockerArgs);
-      return {
-        success: true,
-        exitCode: 0,
-        logFile,
-        output: 'Job started in detached mode',
-      };
-    } catch (err) {
-      const error = err as ExecaError;
-      const errOutput = typeof error.stderr === 'string' ? error.stderr : error.message;
-      return {
-        success: false,
-        exitCode: error.exitCode ?? 1,
-        logFile,
-        output: errOutput,
-      };
-    }
+    return spawnDetachedDockerRun(args, logFile);
   }
 
   // Run in foreground with timeout
@@ -408,27 +434,7 @@ async function runPipelineJob(
   fs.writeFileSync(logFile, logHeader);
 
   if (options.detach) {
-    const dockerArgs = [...args];
-    dockerArgs.splice(1, 0, '-d');
-
-    try {
-      await execa('docker', dockerArgs);
-      return {
-        success: true,
-        exitCode: 0,
-        logFile,
-        output: 'Pipeline job started in detached mode',
-      };
-    } catch (err) {
-      const error = err as ExecaError;
-      const errOutput = typeof error.stderr === 'string' ? error.stderr : error.message;
-      return {
-        success: false,
-        exitCode: error.exitCode ?? 1,
-        logFile,
-        output: errOutput,
-      };
-    }
+    return spawnDetachedDockerRun(args, logFile);
   }
 
   // Run in foreground with timeout
