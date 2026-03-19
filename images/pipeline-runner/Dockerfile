@@ -31,7 +31,8 @@ RUN mkdir -p /etc/claude-code && echo '{}' > /etc/claude-code/managed-settings.j
 
 # Git config for automated commits
 RUN git config --global user.name "Agent Oven" \
-    && git config --global user.email "agent-oven@localhost"
+    && git config --global user.email "agent-oven@localhost" \
+    && git config --global credential.helper '!/usr/bin/gh auth git-credential'
 
 # Set default timezone
 ENV TZ=America/Los_Angeles
