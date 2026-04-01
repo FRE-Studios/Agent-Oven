@@ -18,7 +18,7 @@ export { isDockerAvailable };
  * Returns a stable path to the Node binary, avoiding versioned Homebrew Cellar
  * paths that break on `brew upgrade node`.
  */
-function resolveStableNodePath(): string {
+export function resolveStableNodePath(): string {
   const execPath = process.execPath;
 
   // macOS Homebrew: prefer the stable symlink over the Cellar path
