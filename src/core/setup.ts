@@ -15,6 +15,25 @@ import type { Config } from './types.js';
 export { isDockerAvailable };
 
 /**
+ * Returns a stable path to the Node binary, avoiding versioned Homebrew Cellar
+ * paths that break on `brew upgrade node`.
+ */
+function resolveStableNodePath(): string {
+  const execPath = process.execPath;
+
+  // macOS Homebrew: prefer the stable symlink over the Cellar path
+  if (execPath.startsWith('/opt/homebrew/Cellar/') || execPath.startsWith('/usr/local/Cellar/')) {
+    const prefix = execPath.startsWith('/opt/homebrew/') ? '/opt/homebrew' : '/usr/local';
+    const stable = path.join(prefix, 'bin', 'node');
+    if (fs.existsSync(stable)) {
+      return stable;
+    }
+  }
+
+  return execPath;
+}
+
+/**
  * Create required directories and files
  */
 export function setupFiles(projectDir: string): { created: string[]; existed: string[] } {
@@ -131,7 +150,7 @@ export async function resolveSchedulerCommand(
     if (fs.existsSync(invokedPath)) {
       const ext = path.extname(invokedPath).toLowerCase();
       if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {
-        return [process.execPath, invokedPath, 'scheduler-tick'];
+        return [resolveStableNodePath(), invokedPath, 'scheduler-tick'];
       }
     }
   }
@@ -139,13 +158,13 @@ export async function resolveSchedulerCommand(
   // 2) Project-local build output.
   const projectCliJs = path.resolve(projectDir, 'dist', 'cli.js');
   if (fs.existsSync(projectCliJs)) {
-    return [process.execPath, projectCliJs, 'scheduler-tick'];
+    return [resolveStableNodePath(), projectCliJs, 'scheduler-tick'];
   }
 
   // 3) Package-local build output (works for npm/global installs).
   const packageCliJs = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'cli.js');
   if (fs.existsSync(packageCliJs)) {
-    return [process.execPath, packageCliJs, 'scheduler-tick'];
+    return [resolveStableNodePath(), packageCliJs, 'scheduler-tick'];
   }
 
   // 4) Optional legacy fallback for source checkouts not yet built.
