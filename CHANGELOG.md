@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-04-02
+
+### Fixed
+
+- Cron scheduler reliability — added `mostRecentCronMatch()` helper that scans backwards to find the most recent matching time, preventing both missed executions and double-fires
+- Stale node path detection — daemon config auto-regenerates when the node binary path becomes stale (e.g., after `brew upgrade node`)
+- Homebrew node path stability — `resolveStableNodePath()` resolves versioned Cellar paths to the stable `/bin/node` symlink, surviving Homebrew upgrades without daemon config regeneration
+
 ## [0.2.0] - 2026-03-19
 
 ### Added
