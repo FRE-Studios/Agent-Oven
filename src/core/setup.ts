@@ -15,8 +15,15 @@ import type { Config } from './types.js';
 export { isDockerAvailable };
 
 /**
- * Returns a stable path to the Node binary, avoiding versioned Homebrew Cellar
- * paths that break on `brew upgrade node`.
+ * Returns a stable path to the Node binary, avoiding versioned paths from
+ * package managers that break when the version changes.
+ *
+ * Handled managers:
+ *  - Homebrew: /opt/homebrew/Cellar/node/<ver>/... → /opt/homebrew/bin/node
+ *  - Volta:    ~/.volta/tools/image/node/<ver>/... → ~/.volta/bin/node
+ *
+ * nvm and fnm use version-specific paths too, but version changes are always
+ * explicit user actions (nvm use / fnm use), so they don't silently break.
  */
 export function resolveStableNodePath(): string {
   const execPath = process.execPath;
@@ -25,6 +32,16 @@ export function resolveStableNodePath(): string {
   if (execPath.startsWith('/opt/homebrew/Cellar/') || execPath.startsWith('/usr/local/Cellar/')) {
     const prefix = execPath.startsWith('/opt/homebrew/') ? '/opt/homebrew' : '/usr/local';
     const stable = path.join(prefix, 'bin', 'node');
+    if (fs.existsSync(stable)) {
+      return stable;
+    }
+  }
+
+  // Volta: versioned path under ~/.volta/tools/image/node/<ver>/...
+  // The stable shim lives at ~/.volta/bin/node
+  const voltaToolsPrefix = path.join(os.homedir(), '.volta', 'tools', 'image', 'node');
+  if (execPath.startsWith(voltaToolsPrefix + path.sep)) {
+    const stable = path.join(os.homedir(), '.volta', 'bin', 'node');
     if (fs.existsSync(stable)) {
       return stable;
     }

@@ -37,6 +37,7 @@ import { resolveSchedulerCommand } from '../setup.js';
 
 const mockedExeca = vi.mocked(execa);
 const mockedExistsSync = vi.mocked(fs.existsSync);
+const mockedReadFileSync = vi.mocked(fs.readFileSync);
 const mockedResolveSchedulerCommand = vi.mocked(resolveSchedulerCommand);
 
 // ─── Factory ─────────────────────────────────────────────────
@@ -161,6 +162,66 @@ describe('DarwinAdapter', () => {
     });
   });
 
+  describe('validateDaemonConfig', () => {
+    const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', 'com.agent-oven.scheduler.plist');
+
+    it('returns null when plist does not exist', () => {
+      mockedExistsSync.mockReturnValue(false);
+      expect(adapter.validateDaemonConfig()).toBeNull();
+    });
+
+    it('returns null when the Node binary in the plist exists', () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue(
+        `<key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/node</string>
+        <string>/opt/agent-oven/dist/cli.js</string>
+    </array>`,
+      );
+      expect(adapter.validateDaemonConfig()).toBeNull();
+    });
+
+    it('returns a diagnostic when the Node binary is missing', () => {
+      mockedExistsSync.mockImplementation((p: fs.PathLike) => {
+        if (String(p) === plistPath) return true;
+        // The node binary does not exist
+        return false;
+      });
+      mockedReadFileSync.mockReturnValue(
+        `<key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/Cellar/node/25.6.0/bin/node</string>
+        <string>/opt/agent-oven/dist/cli.js</string>
+    </array>`,
+      );
+
+      const result = adapter.validateDaemonConfig();
+      expect(result).toContain('no longer exists');
+      expect(result).toContain('/opt/homebrew/Cellar/node/25.6.0/bin/node');
+      expect(result).toContain('brew upgrade');
+    });
+  });
+
+  describe('getDaemonProjectDir', () => {
+    it('returns the project directory from StandardOutPath', () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue(
+        `<key>StandardOutPath</key>
+    <string>/opt/agent oven/logs/scheduler.log</string>`,
+      );
+
+      expect(adapter.getDaemonProjectDir()).toBe('/opt/agent oven');
+    });
+
+    it('returns null when the plist lacks a scheduler log path', () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue('<key>StandardOutPath</key><string>/tmp/other.log</string>');
+
+      expect(adapter.getDaemonProjectDir()).toBeNull();
+    });
+  });
+
   describe('checkPackageManager', () => {
     it('returns available: true when brew exists', async () => {
       mockedExeca.mockResolvedValue({ stdout: 'Homebrew 4.2.0' } as any);
@@ -261,6 +322,55 @@ describe('LinuxAdapter', () => {
       expect(mockedResolveSchedulerCommand).toHaveBeenCalledWith('/opt/agent-oven', {
         allowLegacyFallback: false,
       });
+    });
+  });
+
+  describe('validateDaemonConfig', () => {
+    const servicePath = path.join(os.homedir(), '.config', 'systemd', 'user', 'agent-oven-scheduler.service');
+
+    it('returns null when service file does not exist', () => {
+      mockedExistsSync.mockReturnValue(false);
+      expect(adapter.validateDaemonConfig()).toBeNull();
+    });
+
+    it('returns null when the binary in ExecStart exists', () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue(
+        `[Service]\nType=oneshot\nExecStart=/usr/bin/node /opt/agent-oven/dist/cli.js scheduler-tick\n`,
+      );
+      expect(adapter.validateDaemonConfig()).toBeNull();
+    });
+
+    it('returns a diagnostic when the binary in ExecStart is missing', () => {
+      mockedExistsSync.mockImplementation((p: fs.PathLike) => {
+        if (String(p) === servicePath) return true;
+        return false;
+      });
+      mockedReadFileSync.mockReturnValue(
+        `[Service]\nType=oneshot\nExecStart=/home/user/.nvm/versions/node/v20.0.0/bin/node /opt/agent-oven/dist/cli.js scheduler-tick\n`,
+      );
+
+      const result = adapter.validateDaemonConfig();
+      expect(result).toContain('no longer exists');
+      expect(result).toContain('/home/user/.nvm/versions/node/v20.0.0/bin/node');
+    });
+  });
+
+  describe('getDaemonProjectDir', () => {
+    it('returns the project directory from StandardOutput', () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue(
+        '[Service]\nStandardOutput="append:/opt/agent oven/logs/scheduler.log"\n',
+      );
+
+      expect(adapter.getDaemonProjectDir()).toBe('/opt/agent oven');
+    });
+
+    it('returns null when the service lacks a scheduler log path', () => {
+      mockedExistsSync.mockReturnValue(true);
+      mockedReadFileSync.mockReturnValue('[Service]\nStandardOutput="append:/tmp/other.log"\n');
+
+      expect(adapter.getDaemonProjectDir()).toBeNull();
     });
   });
 

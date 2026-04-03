@@ -12,6 +12,8 @@ vi.mock('../config.js', () => ({
   saveConfig: vi.fn(),
 }));
 
+import * as os from 'node:os';
+
 import {
   detectTimezone,
   buildConfig,
@@ -140,6 +142,31 @@ describe('resolveStableNodePath', () => {
     existsSyncMock.mockReturnValue(false);
 
     expect(resolveStableNodePath()).toBe(cellarPath);
+  });
+
+  it('returns stable Volta shim when execPath is a versioned Volta path', () => {
+    const voltaPath = path.join(os.homedir(), '.volta', 'tools', 'image', 'node', '20.11.0', 'bin', 'node');
+    const voltaShim = path.join(os.homedir(), '.volta', 'bin', 'node');
+    Object.defineProperty(process, 'execPath', { value: voltaPath, writable: true });
+    existsSyncMock.mockImplementation((p: string) => String(p) === voltaShim);
+
+    expect(resolveStableNodePath()).toBe(voltaShim);
+  });
+
+  it('falls back to Volta versioned path when shim does not exist', () => {
+    const voltaPath = path.join(os.homedir(), '.volta', 'tools', 'image', 'node', '20.11.0', 'bin', 'node');
+    Object.defineProperty(process, 'execPath', { value: voltaPath, writable: true });
+    existsSyncMock.mockReturnValue(false);
+
+    expect(resolveStableNodePath()).toBe(voltaPath);
+  });
+
+  it('returns nvm path as-is (no rewriting)', () => {
+    const nvmPath = path.join(os.homedir(), '.nvm', 'versions', 'node', 'v20.0.0', 'bin', 'node');
+    Object.defineProperty(process, 'execPath', { value: nvmPath, writable: true });
+    existsSyncMock.mockReturnValue(true);
+
+    expect(resolveStableNodePath()).toBe(nvmPath);
   });
 });
 

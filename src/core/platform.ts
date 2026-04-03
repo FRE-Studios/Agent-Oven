@@ -30,6 +30,17 @@ export interface PlatformAdapter {
   stopDaemon(): Promise<void>;
   /** Generate the daemon config content (for inspection / testing). */
   generateDaemonConfig(projectDir: string): Promise<string>;
+  /**
+   * Validate the existing daemon config.
+   * Returns null if valid, or a diagnostic message if the Node binary path
+   * (or other critical paths) in the config no longer exist on disk.
+   */
+  validateDaemonConfig(): string | null;
+  /**
+   * Extract the project directory referenced by the existing daemon config.
+   * Returns null when the config does not exist or cannot be parsed safely.
+   */
+  getDaemonProjectDir(): string | null;
 
   // ── Container runtime (Colima / native Docker) ──────────────
   /** Current runtime status. */

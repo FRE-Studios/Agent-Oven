@@ -23,9 +23,32 @@ function escapePlistString(value: string): string {
     .replace(/>/g, '&gt;');
 }
 
+function unescapePlistString(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
 // ── Adapter ────────────────────────────────────────────────────
 
 export class DarwinAdapter implements PlatformAdapter {
+  private readDaemonPlist(): string | null {
+    const plistPath = this.getDaemonConfigPath();
+    if (!fs.existsSync(plistPath)) {
+      return null;
+    }
+    return fs.readFileSync(plistPath, 'utf-8');
+  }
+
+  private extractPlistString(content: string, key: string): string | null {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = content.match(
+      new RegExp(`<key>${escapedKey}</key>\\s*<string>([^<]+)</string>`),
+    );
+    return match ? unescapePlistString(match[1]) : null;
+  }
+
   // ── Daemon ──────────────────────────────────────────────────
 
   getDaemonConfigPath(): string {
@@ -62,6 +85,60 @@ export class DarwinAdapter implements PlatformAdapter {
     } catch {
       return { loaded: false };
     }
+  }
+
+  validateDaemonConfig(): string | null {
+    const plistPath = this.getDaemonConfigPath();
+    let content: string | null;
+    try {
+      content = this.readDaemonPlist();
+    } catch {
+      return `Unable to read daemon config at ${plistPath}`;
+    }
+
+    if (!content) {
+      return null; // no config to validate
+    }
+
+    // Extract the first <string> inside <key>ProgramArguments</key><array>...</array>
+    // which is the Node binary path.
+    const progArgsMatch = content.match(
+      /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]+)<\/string>/,
+    );
+    if (!progArgsMatch) {
+      return null; // can't parse — skip validation
+    }
+
+    const nodePath = unescapePlistString(progArgsMatch[1]);
+    if (!fs.existsSync(nodePath)) {
+      return (
+        `Daemon config references a Node binary that no longer exists: ${nodePath}\n` +
+        'This typically happens after `brew upgrade node`. ' +
+        'The daemon will be regenerated with the current Node path.'
+      );
+    }
+
+    return null;
+  }
+
+  getDaemonProjectDir(): string | null {
+    let content: string | null;
+    try {
+      content = this.readDaemonPlist();
+    } catch {
+      return null;
+    }
+
+    if (!content) {
+      return null;
+    }
+
+    const logPath = this.extractPlistString(content, 'StandardOutPath');
+    if (!logPath || !logPath.endsWith(path.join('logs', 'scheduler.log'))) {
+      return null;
+    }
+
+    return path.dirname(path.dirname(logPath));
   }
 
   async installDaemon(projectDir: string): Promise<{ success: boolean; error?: string }> {

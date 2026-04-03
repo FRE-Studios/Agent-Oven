@@ -6,6 +6,7 @@ import type { Command } from 'commander';
 import { handleError } from '../utils/errors.js';
 import { platform } from '../../core/platform.js';
 import { success, error, info, statusIcon } from '../utils/output.js';
+import { repairStaleDaemonConfig, warnIfDaemonConfigStale } from '../utils/daemon.js';
 
 export function register(program: Command): void {
   const cmd = program
@@ -27,6 +28,15 @@ export function register(program: Command): void {
         if (status.lastExitStatus !== undefined) {
           console.log(`  Last exit: ${status.lastExitStatus}`);
         }
+
+        if (warnIfDaemonConfigStale()) {
+          console.log();
+          if (platform.getDaemonProjectDir()) {
+            info('Run `agent-oven daemon restart` to regenerate the config.');
+          } else {
+            info('Run `agent-oven init` from the intended project directory to regenerate the config.');
+          }
+        }
         console.log();
       } catch (err) {
         handleError(err);
@@ -42,6 +52,8 @@ export function register(program: Command): void {
           error(`Daemon config not found at ${platform.getDaemonConfigPath()}. Run \`agent-oven init\` first.`);
           process.exit(1);
         }
+
+        await repairStaleDaemonConfig();
 
         const status = await platform.getSchedulerStatus();
         if (status.loaded) {
@@ -84,6 +96,8 @@ export function register(program: Command): void {
           error(`Daemon config not found at ${platform.getDaemonConfigPath()}. Run \`agent-oven init\` first.`);
           process.exit(1);
         }
+
+        await repairStaleDaemonConfig();
 
         const status = await platform.getSchedulerStatus();
         if (status.loaded) {

@@ -6,6 +6,7 @@ import type { Command } from 'commander';
 import { requireConfig, handleError } from '../utils/errors.js';
 import { platform } from '../../core/platform.js';
 import { success, info } from '../utils/output.js';
+import { repairStaleDaemonConfig } from '../utils/daemon.js';
 
 export function register(program: Command): void {
   program
@@ -33,6 +34,8 @@ export function register(program: Command): void {
           info('Scheduler config not found — skipping daemon. Run `agent-oven init` to set up.');
           return;
         }
+
+        await repairStaleDaemonConfig();
 
         const sched = await platform.getSchedulerStatus();
         if (sched.loaded) {

@@ -51,6 +51,14 @@ function escapeSystemdValue(value: string): string {
 // ── Adapter ────────────────────────────────────────────────────
 
 export class LinuxAdapter implements PlatformAdapter {
+  private readServiceUnit(): string | null {
+    const servicePath = path.join(getSystemdUserDir(), `${SERVICE_NAME}.service`);
+    if (!fs.existsSync(servicePath)) {
+      return null;
+    }
+    return fs.readFileSync(servicePath, 'utf-8');
+  }
+
   // ── Daemon (systemd) ────────────────────────────────────────
 
   getDaemonConfigPath(): string {
@@ -97,6 +105,62 @@ export class LinuxAdapter implements PlatformAdapter {
     } catch {
       return { loaded: false };
     }
+  }
+
+  validateDaemonConfig(): string | null {
+    const unitDir = getSystemdUserDir();
+    const servicePath = path.join(unitDir, `${SERVICE_NAME}.service`);
+    let content: string | null;
+    try {
+      content = this.readServiceUnit();
+    } catch {
+      return `Unable to read daemon config at ${servicePath}`;
+    }
+
+    if (!content) {
+      return null;
+    }
+
+    const execMatch = content.match(/^ExecStart=(.+)$/m);
+    if (!execMatch) {
+      return null;
+    }
+
+    // First token of ExecStart is the binary path (strip quotes if present)
+    const firstToken = execMatch[1].split(/\s+/)[0].replace(/^"|"$/g, '');
+    if (!fs.existsSync(firstToken)) {
+      return (
+        `Daemon config references a binary that no longer exists: ${firstToken}\n` +
+        'The daemon will be regenerated with the current Node path.'
+      );
+    }
+
+    return null;
+  }
+
+  getDaemonProjectDir(): string | null {
+    let content: string | null;
+    try {
+      content = this.readServiceUnit();
+    } catch {
+      return null;
+    }
+
+    if (!content) {
+      return null;
+    }
+
+    const logMatch = content.match(/^StandardOutput="?append:(.+?)"?$/m);
+    if (!logMatch) {
+      return null;
+    }
+
+    const logPath = logMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+    if (!logPath.endsWith(path.join('logs', 'scheduler.log'))) {
+      return null;
+    }
+
+    return path.dirname(path.dirname(logPath));
   }
 
   async installDaemon(projectDir: string): Promise<{ success: boolean; error?: string }> {
