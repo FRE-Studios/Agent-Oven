@@ -240,12 +240,40 @@ export function validateRandomWindow(schedule: RandomWindowSchedule): string | n
   return null;
 }
 
+function mostRecentCronMatch(cronExpr: string, from: Date, maxLookbackMinutes = 1440): Date | null {
+  for (let i = 0; i <= maxLookbackMinutes; i++) {
+    const candidate = new Date(from.getTime() - i * 60_000);
+    candidate.setSeconds(0, 0);
+    if (cronMatches(cronExpr, candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 /**
  * Check if a schedule should run now
  */
 export function shouldRunNow(schedule: Schedule, lastRun?: string | null, date?: Date, jobId?: string): boolean {
   if (schedule.type === 'cron') {
-    return cronMatches(schedule.cron, date);
+    const now = date ?? new Date();
+    const currentMinute = new Date(now);
+    currentMinute.setSeconds(0, 0);
+
+    // Without a valid last-run marker, only fire on an exact cron tick.
+    // Catch-up behavior requires a trusted previous execution timestamp.
+    if (!lastRun) {
+      return cronMatches(schedule.cron, currentMinute);
+    }
+
+    const lastRunDate = parseStoredTimestamp(lastRun);
+    if (isNaN(lastRunDate.getTime())) {
+      return cronMatches(schedule.cron, currentMinute);
+    }
+
+    const match = mostRecentCronMatch(schedule.cron, currentMinute);
+    if (!match) return false;
+    return lastRunDate < match;
   } else if (schedule.type === 'once') {
     return onceShouldRun(schedule.datetime, lastRun);
   } else if (schedule.type === 'random-window') {

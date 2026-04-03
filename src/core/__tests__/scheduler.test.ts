@@ -495,10 +495,61 @@ describe('shouldRunNow', () => {
     vi.useRealTimers();
   });
 
-  it('routes cron schedule to cronMatches', () => {
-    // Set to a time that matches */5
-    vi.setSystemTime(new Date('2025-06-15T10:15:00'));
-    expect(shouldRunNow({ type: 'cron', cron: '*/5 * * * *' })).toBe(true);
+  it('fires cron when tick matches and no lastRun', () => {
+    const date = new Date(2025, 5, 15, 10, 15, 0);
+    expect(shouldRunNow({ type: 'cron', cron: '*/5 * * * *' }, null, date)).toBe(true);
+  });
+
+  it('does not fire cron off-minute when no lastRun', () => {
+    const date = new Date(2025, 5, 15, 10, 0, 0);
+    expect(shouldRunNow({ type: 'cron', cron: '30 4 * * *' }, null, date)).toBe(false);
+  });
+
+  it('fires cron on exact match when lastRun is old', () => {
+    const date = new Date(2025, 5, 15, 4, 30, 0);
+    const lastRun = new Date(2025, 5, 14, 4, 30, 0).toISOString();
+    expect(shouldRunNow({ type: 'cron', cron: '30 4 * * *' }, lastRun, date)).toBe(true);
+  });
+
+  it('fires cron on missed tick (tick at 4:31, cron at 4:30)', () => {
+    const date = new Date(2025, 5, 15, 4, 31, 0);
+    const lastRun = new Date(2025, 5, 14, 4, 30, 0).toISOString();
+    expect(shouldRunNow({ type: 'cron', cron: '30 4 * * *' }, lastRun, date)).toBe(true);
+  });
+
+  it('does not double-fire cron when already ran this window', () => {
+    const date = new Date(2025, 5, 15, 4, 31, 0);
+    const lastRun = new Date(2025, 5, 15, 4, 30, 0).toISOString();
+    expect(shouldRunNow({ type: 'cron', cron: '30 4 * * *' }, lastRun, date)).toBe(false);
+  });
+
+  it('does not fire cron when no match within 24h lookback', () => {
+    // Cron matches only on Mondays at 04:30; tick is Wednesday 10:00; lastRun was Monday
+    // 2025-06-16 is a Monday, 2025-06-18 is a Wednesday
+    const date = new Date(2025, 5, 18, 10, 0, 0);
+    const lastRun = new Date(2025, 5, 16, 4, 30, 0).toISOString();
+    expect(shouldRunNow({ type: 'cron', cron: '30 4 * * 1' }, lastRun, date)).toBe(false);
+  });
+
+  it('fires cron step expression on missed tick', () => {
+    // */5 means :00, :05, :10... tick at :07, lastRun at :04 → missed :05, should fire
+    const date = new Date(2025, 5, 15, 10, 7, 0);
+    const lastRun = new Date(2025, 5, 15, 10, 4, 0).toISOString();
+    expect(shouldRunNow({ type: 'cron', cron: '*/5 * * * *' }, lastRun, date)).toBe(true);
+  });
+
+  it('does not fire cron step expression when already ran', () => {
+    // */5 means :00, :05, :10... tick at :07, lastRun at :05 → already ran for :05
+    const date = new Date(2025, 5, 15, 10, 7, 0);
+    const lastRun = new Date(2025, 5, 15, 10, 5, 0).toISOString();
+    expect(shouldRunNow({ type: 'cron', cron: '*/5 * * * *' }, lastRun, date)).toBe(false);
+  });
+
+  it('falls back to exact-minute matching when lastRun is invalid', () => {
+    const offMinute = new Date(2025, 5, 15, 10, 0, 0);
+    const onMinute = new Date(2025, 5, 15, 4, 30, 0);
+    expect(shouldRunNow({ type: 'cron', cron: '30 4 * * *' }, 'garbage', offMinute)).toBe(false);
+    expect(shouldRunNow({ type: 'cron', cron: '30 4 * * *' }, 'garbage', onMinute)).toBe(true);
   });
 
   it('routes once schedule to onceShouldRun', () => {
