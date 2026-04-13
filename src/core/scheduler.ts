@@ -104,13 +104,17 @@ export function cronMatches(cronExpr: string, date: Date = new Date()): boolean 
   const currentDay = date.getDate();
   const currentMonth = date.getMonth() + 1; // JavaScript months are 0-indexed
   const currentWeekday = date.getDay(); // 0=Sunday, 6=Saturday
+  const dayMatches = matchesCronField(day, currentDay);
+  const weekdayMatches = matchesWeekdayField(weekday, currentWeekday);
+  const dateMatches = day !== '*' && weekday !== '*'
+    ? dayMatches || weekdayMatches
+    : dayMatches && weekdayMatches;
 
   return (
     matchesCronField(minute, currentMinute) &&
     matchesCronField(hour, currentHour) &&
-    matchesCronField(day, currentDay) &&
     matchesCronField(month, currentMonth) &&
-    matchesWeekdayField(weekday, currentWeekday)
+    dateMatches
   );
 }
 
@@ -130,14 +134,14 @@ export function onceShouldRun(datetime: string, lastRun: string | null | undefin
 }
 
 /**
- * djb2 hash — returns a non-negative integer for a given seed string.
+ * djb2 hash — returns an unsigned 32-bit integer for a given seed string.
  */
 export function deterministicHash(seed: string): number {
   let hash = 5381;
   for (let i = 0; i < seed.length; i++) {
     hash = ((hash << 5) + hash + seed.charCodeAt(i)) | 0;
   }
-  return Math.abs(hash);
+  return hash >>> 0;
 }
 
 /**
@@ -158,6 +162,20 @@ export function parseStoredTimestamp(timestamp: string): Date {
   return new Date(normalized);
 }
 
+function formatDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function sameMinute(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate() &&
+    a.getHours() === b.getHours() &&
+    a.getMinutes() === b.getMinutes()
+  );
+}
+
 /**
  * Check if a random-window schedule should run now.
  * Uses a deterministic hash of (jobId + date) to pick a consistent minute within the window.
@@ -168,43 +186,51 @@ export function randomWindowShouldRun(
   date: Date,
   jobId: string,
 ): boolean {
-  // Check weekday
-  if (!matchesWeekdayField(schedule.days ?? '*', date.getDay())) {
-    return false;
-  }
-
-  // Skip if already run today
-  if (lastRun) {
-    const lastRunDate = parseStoredTimestamp(lastRun);
-    if (!isNaN(lastRunDate.getTime())) {
-      if (
-        lastRunDate.getFullYear() === date.getFullYear() &&
-        lastRunDate.getMonth() === date.getMonth() &&
-        lastRunDate.getDate() === date.getDate()
-      ) {
-        return false;
-      }
-    }
-  }
-
-  // Compute window size in minutes (handles midnight-spanning)
   const startMinutes = parseHHMM(schedule.start);
   const endMinutes = parseHHMM(schedule.end);
+  const currentMinutes = date.getHours() * 60 + date.getMinutes();
+  const spansMidnight = endMinutes <= startMinutes;
   const windowSize = endMinutes > startMinutes
     ? endMinutes - startMinutes
     : (24 * 60 - startMinutes) + endMinutes;
 
   if (windowSize <= 0) return false;
 
-  // Deterministic offset from hash
-  const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  const offset = deterministicHash(`${jobId}:${dateStr}`) % windowSize;
-  const targetMinutes = (startMinutes + offset) % (24 * 60);
+  const inWindow = spansMidnight
+    ? currentMinutes >= startMinutes || currentMinutes < endMinutes
+    : currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  if (!inWindow) {
+    return false;
+  }
 
-  const targetHour = Math.floor(targetMinutes / 60);
-  const targetMinute = targetMinutes % 60;
+  const windowStart = new Date(date);
+  if (spansMidnight && currentMinutes < endMinutes) {
+    windowStart.setDate(windowStart.getDate() - 1);
+  }
+  windowStart.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
 
-  return date.getHours() === targetHour && date.getMinutes() === targetMinute;
+  const windowEnd = new Date(windowStart);
+  if (spansMidnight) {
+    windowEnd.setDate(windowEnd.getDate() + 1);
+  }
+  windowEnd.setHours(Math.floor(endMinutes / 60), endMinutes % 60, 0, 0);
+
+  // Weekday filters apply to the day the window starts.
+  if (!matchesWeekdayField(schedule.days ?? '*', windowStart.getDay())) {
+    return false;
+  }
+
+  // Skip if already run in this window.
+  if (lastRun) {
+    const lastRunDate = parseStoredTimestamp(lastRun);
+    if (!isNaN(lastRunDate.getTime()) && lastRunDate >= windowStart && lastRunDate < windowEnd) {
+      return false;
+    }
+  }
+
+  const offset = deterministicHash(`${jobId}:${formatDateKey(windowStart)}`) % windowSize;
+  const targetTime = new Date(windowStart.getTime() + offset * 60_000);
+  return sameMinute(date, targetTime);
 }
 
 /**
@@ -493,10 +519,13 @@ function validateCronField(field: string, min: number, max: number): string | nu
     if (stepNum < 1) {
       return `Invalid step value: ${step}`;
     }
-    if (range !== '*') {
-      return validateCronField(range, min, max);
+    if (range === '*') {
+      return null;
     }
-    return null;
+    if (!/^(\d+)-(\d+)$/.test(range)) {
+      return `Invalid step expression: ${field}`;
+    }
+    return validateCronField(range, min, max);
   }
 
   // Handle ranges

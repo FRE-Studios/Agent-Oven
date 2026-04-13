@@ -171,6 +171,20 @@ describe('cronMatches', () => {
     expect(cronMatches('0 9 * * 1-5', new Date('2025-06-21T09:00:00'))).toBe(false);
   });
 
+  it('matches when weekday matches and day-of-month is also restricted', () => {
+    // 2025-06-02 is Monday, but not the 1st.
+    expect(cronMatches('0 0 1 * 1', new Date('2025-06-02T00:00:00'))).toBe(true);
+  });
+
+  it('matches when day-of-month matches and weekday is also restricted', () => {
+    // 2025-06-01 is the 1st, but not Monday.
+    expect(cronMatches('0 0 1 * 1', new Date('2025-06-01T00:00:00'))).toBe(true);
+  });
+
+  it('does not match when neither day-of-month nor weekday matches', () => {
+    expect(cronMatches('0 0 1 * 1', new Date('2025-06-03T00:00:00'))).toBe(false);
+  });
+
   // All fields combined
   it('matches all fields: 30 14 15 6 *', () => {
     expect(cronMatches('30 14 15 6 *', new Date('2025-06-15T14:30:00'))).toBe(true);
@@ -212,6 +226,14 @@ describe('validateCron', () => {
 
   it('returns null for valid cron with step: */5 * * * *', () => {
     expect(validateCron('*/5 * * * *')).toBeNull();
+  });
+
+  it('returns null for valid cron with range+step', () => {
+    expect(validateCron('5-10/2 * * * *')).toBeNull();
+  });
+
+  it('rejects unsupported start+step syntax', () => {
+    expect(validateCron('1/2 * * * *')).toContain('Invalid step expression');
   });
 
   it('returns null for valid cron with commas: 0,30 * * * *', () => {
@@ -783,7 +805,7 @@ describe('randomWindowShouldRun', () => {
     expect(t2! >= 0 && t2! < 60).toBe(true);
   });
 
-  it('returns false if already run today', () => {
+  it('returns false if already run in the same window', () => {
     // Find the matching minute first
     let matchingDate: Date | null = null;
     for (let m = 0; m < 60; m++) {
@@ -794,8 +816,7 @@ describe('randomWindowShouldRun', () => {
       }
     }
     expect(matchingDate).not.toBeNull();
-    // Now test with a lastRun on the same day
-    expect(randomWindowShouldRun(schedule, '2025-06-15T08:00:00', matchingDate!, 'my-job')).toBe(false);
+    expect(randomWindowShouldRun(schedule, matchingDate!.toISOString(), matchingDate!, 'my-job')).toBe(false);
   });
 
   it('returns true if lastRun was yesterday', () => {
@@ -844,6 +865,28 @@ describe('randomWindowShouldRun', () => {
     // Check 00:xx
     for (let m = 0; m < 60; m++) {
       const d = new Date(`2025-06-15T00:${String(m).padStart(2, '0')}:00`);
+      if (randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')) found = true;
+    }
+    expect(found).toBe(true);
+  });
+
+  it('anchors midnight-spanning windows to the day the window starts', () => {
+    const midnightSchedule: RandomWindowSchedule = { type: 'random-window', start: '23:00', end: '01:00', days: '1' };
+
+    // Monday windows should not fire early Monday morning before 23:00.
+    for (let m = 0; m < 60; m++) {
+      const d = new Date(`2025-06-16T00:${String(m).padStart(2, '0')}:00`);
+      expect(randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')).toBe(false);
+    }
+
+    // The Monday window should still resolve somewhere between Monday 23:00 and Tuesday 01:00.
+    let found = false;
+    for (let m = 0; m < 60; m++) {
+      const d = new Date(`2025-06-16T23:${String(m).padStart(2, '0')}:00`);
+      if (randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')) found = true;
+    }
+    for (let m = 0; m < 60; m++) {
+      const d = new Date(`2025-06-17T00:${String(m).padStart(2, '0')}:00`);
       if (randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')) found = true;
     }
     expect(found).toBe(true);

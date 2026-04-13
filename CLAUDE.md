@@ -150,6 +150,15 @@ User config stored at `~/.config/agent-oven/config.json` (XDG compliant):
 - Scheduler log: `logs/scheduler.log`
 - Job logs: `logs/jobs/<job-id>/<timestamp>.log`
 
+## Publishing to npm
+
+1. Update `CHANGELOG.md` with new version section
+2. Bump version: `npm version <version> --no-git-tag-version`
+3. Commit, tag (`v<version>`), and push with `git push origin v<version>`
+4. Publish: `npm publish`
+
+`prepublishOnly` runs the build automatically. `files` in package.json controls what's included.
+
 ## Development
 
 The codebase uses:
