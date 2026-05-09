@@ -166,16 +166,6 @@ function formatDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function sameMinute(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate() &&
-    a.getHours() === b.getHours() &&
-    a.getMinutes() === b.getMinutes()
-  );
-}
-
 /**
  * Check if a random-window schedule should run now.
  * Uses a deterministic hash of (jobId + date) to pick a consistent minute within the window.
@@ -230,7 +220,10 @@ export function randomWindowShouldRun(
 
   const offset = deterministicHash(`${jobId}:${formatDateKey(windowStart)}`) % windowSize;
   const targetTime = new Date(windowStart.getTime() + offset * 60_000);
-  return sameMinute(date, targetTime);
+  // Fire at or after the target minute, as long as we're still in the window and
+  // haven't already run this window (checked above). Tolerates tick drift across
+  // minute boundaries that previously caused exact-minute matches to be missed.
+  return date.getTime() >= targetTime.getTime();
 }
 
 /**

@@ -757,6 +757,33 @@ describe('parseStoredTimestamp', () => {
   });
 });
 
+function formatLocalDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function expectedRandomWindowTarget(
+  schedule: RandomWindowSchedule,
+  dateInWindow: Date,
+  jobId: string,
+): Date {
+  const startMinutes = parseHHMM(schedule.start);
+  const endMinutes = parseHHMM(schedule.end);
+  const currentMinutes = dateInWindow.getHours() * 60 + dateInWindow.getMinutes();
+  const spansMidnight = endMinutes <= startMinutes;
+  const windowSize = endMinutes > startMinutes
+    ? endMinutes - startMinutes
+    : (24 * 60 - startMinutes) + endMinutes;
+  const windowStart = new Date(dateInWindow);
+
+  if (spansMidnight && currentMinutes < endMinutes) {
+    windowStart.setDate(windowStart.getDate() - 1);
+  }
+  windowStart.setHours(Math.floor(startMinutes / 60), startMinutes % 60, 0, 0);
+
+  const offset = deterministicHash(`${jobId}:${formatLocalDateKey(windowStart)}`) % windowSize;
+  return new Date(windowStart.getTime() + offset * 60_000);
+}
+
 // ─── randomWindowShouldRun ──────────────────────────────────
 
 describe('randomWindowShouldRun', () => {
@@ -772,65 +799,31 @@ describe('randomWindowShouldRun', () => {
   it('different dates produce different target minutes (most of the time)', () => {
     const targetMinutes: number[] = [];
     for (let d = 1; d <= 30; d++) {
-      let targetMinute: number | null = null;
-      for (let m = 0; m < 60; m++) {
-        const date = new Date(`2025-06-${String(d).padStart(2, '0')}T09:${String(m).padStart(2, '0')}:00`);
-        if (randomWindowShouldRun(schedule, null, date, 'test-job')) {
-          targetMinute = m;
-          break;
-        }
-      }
-      expect(targetMinute).not.toBeNull();
-      targetMinutes.push(targetMinute!);
+      const date = new Date(`2025-06-${String(d).padStart(2, '0')}T09:00:00`);
+      const target = expectedRandomWindowTarget(schedule, date, 'test-job');
+      expect(randomWindowShouldRun(schedule, null, target, 'test-job')).toBe(true);
+      targetMinutes.push(target.getMinutes());
     }
     expect(new Set(targetMinutes).size).toBeGreaterThan(1);
   });
 
   it('different jobIds produce different target minutes for the same date', () => {
-    // Find the target minute for each job on the same day by iterating all minutes in window
-    const findTarget = (jobId: string): number | null => {
-      for (let m = 0; m < 60; m++) {
-        const date = new Date(`2025-06-15T09:${String(m).padStart(2, '0')}:00`);
-        if (randomWindowShouldRun(schedule, null, date, jobId)) return m;
-      }
-      return null;
-    };
-    const t1 = findTarget('job-alpha');
-    const t2 = findTarget('job-beta');
-    expect(t1).not.toBeNull();
-    expect(t2).not.toBeNull();
-    // Very unlikely to be the same (1/60 chance)
-    // If they happen to be equal, that's still a valid hash — we just test that both resolve
-    expect(t1! >= 0 && t1! < 60).toBe(true);
-    expect(t2! >= 0 && t2! < 60).toBe(true);
+    const date = new Date('2025-06-15T09:00:00');
+    const t1 = expectedRandomWindowTarget(schedule, date, 'job-alpha').getMinutes();
+    const t2 = expectedRandomWindowTarget(schedule, date, 'job-beta').getMinutes();
+    expect(t1).not.toBe(t2);
+    expect(t1 >= 0 && t1 < 60).toBe(true);
+    expect(t2 >= 0 && t2 < 60).toBe(true);
   });
 
   it('returns false if already run in the same window', () => {
-    // Find the matching minute first
-    let matchingDate: Date | null = null;
-    for (let m = 0; m < 60; m++) {
-      const d = new Date(`2025-06-15T09:${String(m).padStart(2, '0')}:00`);
-      if (randomWindowShouldRun(schedule, null, d, 'my-job')) {
-        matchingDate = d;
-        break;
-      }
-    }
-    expect(matchingDate).not.toBeNull();
-    expect(randomWindowShouldRun(schedule, matchingDate!.toISOString(), matchingDate!, 'my-job')).toBe(false);
+    const targetDate = expectedRandomWindowTarget(schedule, new Date('2025-06-15T09:00:00'), 'my-job');
+    expect(randomWindowShouldRun(schedule, targetDate.toISOString(), targetDate, 'my-job')).toBe(false);
   });
 
   it('returns true if lastRun was yesterday', () => {
-    // Find the matching minute
-    let matchingDate: Date | null = null;
-    for (let m = 0; m < 60; m++) {
-      const d = new Date(`2025-06-15T09:${String(m).padStart(2, '0')}:00`);
-      if (randomWindowShouldRun(schedule, null, d, 'my-job')) {
-        matchingDate = d;
-        break;
-      }
-    }
-    expect(matchingDate).not.toBeNull();
-    expect(randomWindowShouldRun(schedule, '2025-06-14T09:00:00', matchingDate!, 'my-job')).toBe(true);
+    const targetDate = expectedRandomWindowTarget(schedule, new Date('2025-06-15T09:00:00'), 'my-job');
+    expect(randomWindowShouldRun(schedule, '2025-06-14T09:00:00', targetDate, 'my-job')).toBe(true);
   });
 
   it('respects weekday filtering — returns false on wrong day', () => {
@@ -844,30 +837,15 @@ describe('randomWindowShouldRun', () => {
 
   it('allows weekday when day matches', () => {
     const weekdaySchedule: RandomWindowSchedule = { type: 'random-window', start: '09:00', end: '10:00', days: '1-5' };
-    // 2025-06-16 is Monday (day 1) — should have exactly one matching minute
-    let found = false;
-    for (let m = 0; m < 60; m++) {
-      const d = new Date(`2025-06-16T09:${String(m).padStart(2, '0')}:00`);
-      if (randomWindowShouldRun(weekdaySchedule, null, d, 'test-job')) found = true;
-    }
-    expect(found).toBe(true);
+    // 2025-06-16 is Monday (day 1), so the computed target is eligible.
+    const targetDate = expectedRandomWindowTarget(weekdaySchedule, new Date('2025-06-16T09:00:00'), 'test-job');
+    expect(randomWindowShouldRun(weekdaySchedule, null, targetDate, 'test-job')).toBe(true);
   });
 
   it('handles midnight-spanning window (e.g., 23:00 - 01:00)', () => {
     const midnightSchedule: RandomWindowSchedule = { type: 'random-window', start: '23:00', end: '01:00' };
-    // Window is 2 hours = 120 minutes
-    let found = false;
-    // Check 23:xx
-    for (let m = 0; m < 60; m++) {
-      const d = new Date(`2025-06-15T23:${String(m).padStart(2, '0')}:00`);
-      if (randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')) found = true;
-    }
-    // Check 00:xx
-    for (let m = 0; m < 60; m++) {
-      const d = new Date(`2025-06-15T00:${String(m).padStart(2, '0')}:00`);
-      if (randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')) found = true;
-    }
-    expect(found).toBe(true);
+    const targetDate = expectedRandomWindowTarget(midnightSchedule, new Date('2025-06-15T23:00:00'), 'midnight-job');
+    expect(randomWindowShouldRun(midnightSchedule, null, targetDate, 'midnight-job')).toBe(true);
   });
 
   it('anchors midnight-spanning windows to the day the window starts', () => {
@@ -879,17 +857,50 @@ describe('randomWindowShouldRun', () => {
       expect(randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')).toBe(false);
     }
 
-    // The Monday window should still resolve somewhere between Monday 23:00 and Tuesday 01:00.
-    let found = false;
-    for (let m = 0; m < 60; m++) {
-      const d = new Date(`2025-06-16T23:${String(m).padStart(2, '0')}:00`);
-      if (randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')) found = true;
-    }
-    for (let m = 0; m < 60; m++) {
-      const d = new Date(`2025-06-17T00:${String(m).padStart(2, '0')}:00`);
-      if (randomWindowShouldRun(midnightSchedule, null, d, 'midnight-job')) found = true;
-    }
-    expect(found).toBe(true);
+    // The Monday window should still resolve between Monday 23:00 and Tuesday 01:00.
+    const targetDate = expectedRandomWindowTarget(midnightSchedule, new Date('2025-06-16T23:00:00'), 'midnight-job');
+    expect(randomWindowShouldRun(midnightSchedule, null, targetDate, 'midnight-job')).toBe(true);
+  });
+
+  it('catches up if a tick crosses past the target minute within the window', () => {
+    const targetDate = expectedRandomWindowTarget(schedule, new Date('2025-06-15T09:00:00'), 'catchup-job');
+    expect(targetDate.getHours()).toBe(9);
+    expect(targetDate.getMinutes()).toBe(38);
+
+    // Simulate tick drift: the daemon's tick lands one minute past the target,
+    // still within the window, with no prior run today. It must fire, not
+    // silently skip until tomorrow.
+    const drifted = new Date(targetDate.getTime() + 60_000 + 42_000);
+    expect(randomWindowShouldRun(schedule, null, drifted, 'catchup-job')).toBe(true);
+
+    // But should not fire before reaching the target.
+    const before = new Date(targetDate.getTime() - 60_000 + 42_000);
+    expect(randomWindowShouldRun(schedule, null, before, 'catchup-job')).toBe(false);
+  });
+
+  it('does not catch up at or after the random window end', () => {
+    expect(randomWindowShouldRun(schedule, null, new Date('2025-06-15T10:00:00'), 'catchup-job')).toBe(false);
+    expect(randomWindowShouldRun(schedule, null, new Date('2025-06-15T10:00:42'), 'catchup-job')).toBe(false);
+  });
+
+  it('catches up after midnight using the day the window starts for filtering and hashing', () => {
+    const midnightSchedule: RandomWindowSchedule = { type: 'random-window', start: '23:00', end: '01:00', days: '1' };
+    const targetDate = expectedRandomWindowTarget(midnightSchedule, new Date('2025-06-16T23:00:00'), 'mon-midnight');
+    expect(targetDate.getDay()).toBe(2);
+    expect(targetDate.getHours()).toBe(0);
+    expect(targetDate.getMinutes()).toBe(38);
+
+    const before = new Date(targetDate.getTime() - 60_000 + 42_000);
+    const drifted = new Date(targetDate.getTime() + 60_000 + 42_000);
+    expect(randomWindowShouldRun(midnightSchedule, null, before, 'mon-midnight')).toBe(false);
+    expect(randomWindowShouldRun(midnightSchedule, null, drifted, 'mon-midnight')).toBe(true);
+  });
+
+  it('does not double-fire after catching up: lastRun within window blocks subsequent ticks', () => {
+    // After running at target, a later tick in the same window must not fire again.
+    const targetDate = expectedRandomWindowTarget(schedule, new Date('2025-06-15T09:00:00'), 'catchup-job');
+    const laterTick = new Date(targetDate.getTime() + 5 * 60_000);
+    expect(randomWindowShouldRun(schedule, targetDate.toISOString(), laterTick, 'catchup-job')).toBe(false);
   });
 
   it('shouldRunNow returns false for random-window when jobId is missing', () => {
@@ -897,17 +908,8 @@ describe('randomWindowShouldRun', () => {
   });
 
   it('shouldRunNow routes to randomWindowShouldRun when jobId is provided', () => {
-    // Find the exact minute that matches
-    let matchingDate: Date | null = null;
-    for (let m = 0; m < 60; m++) {
-      const d = new Date(`2025-06-15T09:${String(m).padStart(2, '0')}:00`);
-      if (randomWindowShouldRun(schedule, null, d, 'rw-job')) {
-        matchingDate = d;
-        break;
-      }
-    }
-    expect(matchingDate).not.toBeNull();
-    expect(shouldRunNow(schedule, null, matchingDate!, 'rw-job')).toBe(true);
+    const targetDate = expectedRandomWindowTarget(schedule, new Date('2025-06-15T09:00:00'), 'rw-job');
+    expect(shouldRunNow(schedule, null, targetDate, 'rw-job')).toBe(true);
   });
 });
 
