@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2026-05-08
+
+### Fixed
+
+- Random-window catch-up — `randomWindowShouldRun` no longer requires an exact minute match. If tick drift pushes the daemon past the deterministic target minute, subsequent ticks within the same window will still fire (provided the job hasn't already run). Mirrors the catch-up pattern used for cron via `mostRecentCronMatch`.
+- Midnight-spanning random-window support — windows like `23:00 → 01:00` now correctly anchor to the day the window starts, fire once per anchored window, and respect weekday filters against the start day rather than the wraparound day.
+- `deterministicHash` now returns a proper unsigned 32-bit integer (`>>> 0`) instead of `Math.abs()`, avoiding the edge case where `Math.abs(INT_MIN)` returned a negative value.
+
+### Changed
+
+- Cron day-of-month / weekday semantics — when both `day` and `weekday` are non-wildcard, the schedule now matches if **either** matches (POSIX-compliant OR semantics). Previously required both. Pure-wildcard cases are unaffected.
+
 ## [0.2.1] - 2026-04-02
 
 ### Fixed
