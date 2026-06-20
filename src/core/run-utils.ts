@@ -105,6 +105,7 @@ export async function spawnDetachedRun(
     'EC=$?',
     `printf '\\n=== Finished: %s ===\\n=== Exit Code: %d ===\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$EC"`,
     ...(options.cleanupCommand ? [options.cleanupCommand] : []),
+    'exit "$EC"',
   ].join('\n');
 
   let child: ReturnType<typeof spawn>;

@@ -47,6 +47,47 @@ export function writePidFile(config: Config, jobId: string, pid: number | undefi
   }
 }
 
+/**
+ * Atomically acquire a host job lock.
+ *
+ * The file is created with `wx`, so concurrent runners cannot both pass the
+ * check-then-write window. The scheduler process PID is written first as a
+ * short-lived placeholder; the runner updates it to the child PID after spawn.
+ */
+export function acquirePidFile(config: Config, jobId: string): boolean {
+  const runDir = getRunDir(config);
+  const pidFile = getPidFilePath(config, jobId);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let fd: number | undefined;
+    try {
+      fs.mkdirSync(runDir, { recursive: true });
+      fd = fs.openSync(pidFile, 'wx');
+      fs.writeFileSync(fd, String(process.pid));
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        return false;
+      }
+
+      if (isHostJobRunning(config, jobId)) {
+        return false;
+      }
+      // Stale lock was reaped by isHostJobRunning; retry once.
+    } finally {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch {
+          // Ignore close errors
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
 /** Remove a host job's PID lockfile. */
 export function removePidFile(config: Config, jobId: string): void {
   try {

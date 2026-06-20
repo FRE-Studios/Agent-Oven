@@ -20,6 +20,7 @@ vi.mock('../run-utils.js', () => ({
 }));
 
 vi.mock('../host-lock.js', () => ({
+  acquirePidFile: vi.fn(() => true),
   getPidFilePath: vi.fn(() => '/tmp/run/test-host.pid'),
   writePidFile: vi.fn(),
   removePidFile: vi.fn(),
@@ -28,14 +29,17 @@ vi.mock('../host-lock.js', () => ({
 import { execa } from 'execa';
 import * as fs from 'node:fs';
 import { spawnDetachedRun } from '../run-utils.js';
-import { writePidFile, removePidFile } from '../host-lock.js';
+import { acquirePidFile, writePidFile, removePidFile } from '../host-lock.js';
 import { runHostJob } from '../host-runner.js';
 import { makeConfig, makeHostJob } from './fixtures.js';
 
 const execaMock = vi.mocked(execa);
 
 /** A fake execa subprocess: an awaitable that also carries a `.pid`. */
-function fakeSubprocess(result: { stdout?: string; stderr?: string; exitCode: number }, pid = 4321) {
+function fakeSubprocess(
+  result: { stdout?: string; stderr?: string; exitCode?: number; failed?: boolean; message?: string },
+  pid = 4321,
+) {
   const p = Promise.resolve(result) as Promise<typeof result> & { pid: number };
   p.pid = pid;
   return p;
@@ -44,6 +48,7 @@ function fakeSubprocess(result: { stdout?: string; stderr?: string; exitCode: nu
 describe('runHostJob (foreground)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(acquirePidFile).mockReturnValue(true);
   });
 
   it('execs an array command argv-style with cwd, merged env, and timeout', async () => {
@@ -120,12 +125,44 @@ describe('runHostJob (foreground)', () => {
   });
 
   it('maps a non-zero exit code to failure', async () => {
-    execaMock.mockReturnValue(fakeSubprocess({ stdout: '', stderr: 'boom', exitCode: 3 }) as any);
+    execaMock.mockReturnValue(fakeSubprocess({ stdout: '', stderr: 'boom', exitCode: 3, failed: true }) as any);
 
     const result = await runHostJob(makeConfig(), makeHostJob());
 
     expect(result.success).toBe(false);
     expect(result.exitCode).toBe(3);
+  });
+
+  it('maps execa failures without an exit code to exit 1', async () => {
+    execaMock.mockReturnValue(fakeSubprocess({
+      stdout: '',
+      stderr: '',
+      failed: true,
+      message: 'spawn ENOENT',
+    }) as any);
+
+    const result = await runHostJob(makeConfig(), makeHostJob());
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toBe('spawn ENOENT');
+
+    const footer = String(vi.mocked(fs.appendFileSync).mock.calls[0]![1]);
+    expect(footer).toContain('=== Exit Code: 1 ===');
+    expect(footer).toContain('=== Error: spawn ENOENT ===');
+  });
+
+  it('does not spawn when the host lock is already held', async () => {
+    vi.mocked(acquirePidFile).mockReturnValue(false);
+
+    const result = await runHostJob(makeConfig(), makeHostJob({ id: 'test-host' }));
+
+    expect(result.success).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain('already running');
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(spawnDetachedRun).not.toHaveBeenCalled();
+    expect(removePidFile).not.toHaveBeenCalled();
   });
 
   it('records the running PID and clears it on completion', async () => {
@@ -152,6 +189,7 @@ describe('runHostJob (foreground)', () => {
 describe('runHostJob (detached)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(acquirePidFile).mockReturnValue(true);
   });
 
   it('delegates to spawnDetachedRun with cwd, env, lockfile cleanup, and PID hook', async () => {
@@ -174,5 +212,19 @@ describe('runHostJob (detached)', () => {
     // The onSpawn hook records the live PID
     (opts as any).onSpawn(9999);
     expect(writePidFile).toHaveBeenCalledWith(config, 'test-host', 9999);
+  });
+
+  it('clears the lock when detached startup fails before cleanup can run', async () => {
+    vi.mocked(spawnDetachedRun).mockResolvedValueOnce({
+      success: false,
+      exitCode: 1,
+      logFile: '/tmp/jobs/test-host/ts.log',
+      output: 'spawn failed',
+    });
+
+    const result = await runHostJob(makeConfig(), makeHostJob({ id: 'test-host' }), { detach: true });
+
+    expect(result.success).toBe(false);
+    expect(removePidFile).toHaveBeenCalledWith(expect.anything(), 'test-host');
   });
 });

@@ -41,6 +41,7 @@ vi.mock('../platform.js', () => ({
 }));
 
 import { listJobs } from '../jobs.js';
+import { execa } from 'execa';
 import { runJob } from '../docker.js';
 import { shouldRunNow } from '../scheduler.js';
 import { isHostJobRunning } from '../host-lock.js';
@@ -63,6 +64,7 @@ describe('runSchedulerTick — runtime gating', () => {
     const code = await runSchedulerTick(config);
 
     expect(code).toBe(0);
+    expect(execa).not.toHaveBeenCalled();
     expect(platform.getRuntimeStatus).not.toHaveBeenCalled();
     expect(platform.ensureRuntime).not.toHaveBeenCalled();
     expect(runJob).toHaveBeenCalledTimes(1);

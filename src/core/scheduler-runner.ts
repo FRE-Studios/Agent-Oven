@@ -192,12 +192,6 @@ export async function runSchedulerTick(config: Config): Promise<number> {
     const msg = err instanceof Error ? err.message : String(err);
     log(`WARN: Job log pruning failed: ${msg}`);
   }
-  try {
-    await pruneDockerResources(config);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`WARN: Docker prune failed: ${msg}`);
-  }
 
   // --- Load jobs ---
   const jobs = listJobs(config);
@@ -221,15 +215,23 @@ export async function runSchedulerTick(config: Config): Promise<number> {
     return 0;
   }
 
+  const hasDueContainerJob = dueJobs.some((job) => !isHostJob(job));
+
   // --- Ensure container runtime, but only if a due job actually needs it ---
   // A host-only tick must not start (or require) Docker/Colima.
-  if (dueJobs.some((job) => !isHostJob(job))) {
+  if (hasDueContainerJob) {
     try {
       await ensureRuntime(config);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`ERROR: Failed to start container runtime: ${msg}`);
       return 1;
+    }
+    try {
+      await pruneDockerResources(config);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`WARN: Docker prune failed: ${msg}`);
     }
   } else {
     log('Only host jobs due — skipping container runtime startup');

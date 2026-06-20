@@ -15,7 +15,7 @@ import {
   shellEscape,
   spawnDetachedRun,
 } from './run-utils.js';
-import { getPidFilePath, writePidFile, removePidFile } from './host-lock.js';
+import { acquirePidFile, getPidFilePath, writePidFile, removePidFile } from './host-lock.js';
 
 /**
  * Common binary locations to ensure are on PATH. The scheduler runs under
@@ -89,6 +89,21 @@ export async function runHostJob(
   ].join('\n');
   fs.writeFileSync(logFile, logHeader);
 
+  if (!acquirePidFile(config, job.id)) {
+    const message = `Host job ${job.id} is already running, or its lockfile could not be acquired`;
+    fs.appendFileSync(logFile, [
+      `=== Skipped: ${new Date().toISOString()} ===`,
+      `=== Exit Code: 1 ===`,
+      `=== Error: ${message} ===`,
+    ].join('\n'));
+    return {
+      success: false,
+      exitCode: 1,
+      logFile,
+      output: message,
+    };
+  }
+
   if (options.detach) {
     // Build a shell-ready command line. Array commands are shell-escaped
     // argv-by-argv; string/shell commands are passed through verbatim.
@@ -97,7 +112,7 @@ export async function runHostJob(
       : (job.command as string[]).map(shellEscape).join(' ');
     const pidFile = getPidFilePath(config, job.id);
 
-    return spawnDetachedRun(commandLine, logFile, {
+    const result = await spawnDetachedRun(commandLine, logFile, {
       cwd,
       env,
       onSpawn: (pid) => writePidFile(config, job.id, pid),
@@ -105,6 +120,10 @@ export async function runHostJob(
       // own lockfile when it finishes.
       cleanupCommand: `rm -f ${shellEscape(pidFile)}`,
     });
+    if (!result.success) {
+      removePidFile(config, job.id);
+    }
+    return result;
   }
 
   // Foreground run with timeout.
@@ -130,20 +149,24 @@ export async function runHostJob(
 
     const stdout = typeof result.stdout === 'string' ? result.stdout : '';
     const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    const failed = result.failed === true || result.exitCode !== 0;
+    const exitCode = typeof result.exitCode === 'number' ? result.exitCode : 1;
+    const message = 'message' in result && result.failed === true ? result.message : '';
     const logContent = [
       stdout,
       stderr,
       '',
       `=== Finished: ${new Date().toISOString()} ===`,
-      `=== Exit Code: ${result.exitCode} ===`,
+      `=== Exit Code: ${exitCode} ===`,
+      ...(message ? [`=== Error: ${message} ===`] : []),
     ].filter(Boolean).join('\n');
     fs.appendFileSync(logFile, logContent);
 
     return {
-      success: result.exitCode === 0,
-      exitCode: result.exitCode ?? 0,
+      success: !failed,
+      exitCode,
       logFile,
-      output: stdout,
+      output: stdout || (failed ? stderr || message : stdout),
     };
   } catch (err) {
     const error = err as ExecaError;

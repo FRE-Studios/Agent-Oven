@@ -3,6 +3,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(() => true),
   mkdirSync: vi.fn(),
+  openSync: vi.fn(() => 9),
+  closeSync: vi.fn(),
   writeFileSync: vi.fn(),
   unlinkSync: vi.fn(),
   readFileSync: vi.fn(() => ''),
@@ -11,6 +13,7 @@ vi.mock('node:fs', () => ({
 import * as fs from 'node:fs';
 import {
   getPidFilePath,
+  acquirePidFile,
   writePidFile,
   removePidFile,
   isHostJobRunning,
@@ -37,6 +40,53 @@ describe('writePidFile', () => {
   it('is a no-op when pid is undefined', () => {
     writePidFile(config, 'my-job', undefined);
     expect(fs.writeFileSync).not.toHaveBeenCalled();
+  });
+});
+
+describe('acquirePidFile', () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fs.openSync).mockReturnValue(9);
+    killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    killSpy.mockRestore();
+  });
+
+  it('atomically creates a pid file with the current process pid', () => {
+    expect(acquirePidFile(config, 'my-job')).toBe(true);
+    expect(fs.mkdirSync).toHaveBeenCalledWith('/proj/logs/run', { recursive: true });
+    expect(fs.openSync).toHaveBeenCalledWith('/proj/logs/run/my-job.pid', 'wx');
+    expect(fs.writeFileSync).toHaveBeenCalledWith(9, String(process.pid));
+    expect(fs.closeSync).toHaveBeenCalledWith(9);
+  });
+
+  it('returns false when an existing lock names a live process', () => {
+    const e: any = new Error('EEXIST');
+    e.code = 'EEXIST';
+    vi.mocked(fs.openSync).mockImplementation(() => { throw e; });
+    vi.mocked(fs.readFileSync).mockReturnValue('4321');
+
+    expect(acquirePidFile(config, 'my-job')).toBe(false);
+    expect(killSpy).toHaveBeenCalledWith(4321, 0);
+  });
+
+  it('reaps a stale lock and retries once', () => {
+    const e: any = new Error('EEXIST');
+    e.code = 'EEXIST';
+    vi.mocked(fs.openSync)
+      .mockImplementationOnce(() => { throw e; })
+      .mockReturnValueOnce(9);
+    vi.mocked(fs.readFileSync).mockReturnValue('4321');
+    killSpy.mockImplementation(() => { const err: any = new Error('ESRCH'); err.code = 'ESRCH'; throw err; });
+
+    expect(acquirePidFile(config, 'my-job')).toBe(true);
+    expect(fs.unlinkSync).toHaveBeenCalledWith('/proj/logs/run/my-job.pid');
+    expect(fs.openSync).toHaveBeenCalledTimes(2);
+    expect(fs.writeFileSync).toHaveBeenCalledWith(9, String(process.pid));
   });
 });
 

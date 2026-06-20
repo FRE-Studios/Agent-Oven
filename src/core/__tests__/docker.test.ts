@@ -77,6 +77,7 @@ describe('runJob (detached)', () => {
     const job = makeDockerJob();
 
     const resultPromise = runJob(config, job, { detach: true });
+    expect((spawnMock.mock.calls[0]![1] as string[])[1]).toContain('exit "$EC"');
     child.emit('exit', 125, null);
     const result = await resultPromise;
 
