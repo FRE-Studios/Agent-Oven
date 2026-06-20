@@ -13,14 +13,24 @@ function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
+/** Parse a --command value: a JSON array (when it starts with `[`) or a string. */
+function parseCommand(raw: string): string | string[] {
+  if (raw.startsWith('[')) {
+    return JSON.parse(raw) as string[];
+  }
+  return raw;
+}
+
 export function register(program: Command): void {
   program
     .command('add <id>')
     .description('Add a new job')
     .requiredOption('--name <name>', 'Human-readable job name')
-    .option('--type <type>', 'Job type (docker or agent-pipeline)', 'docker')
+    .option('--type <type>', 'Job type (docker, agent-pipeline, or host)', 'docker')
     .option('--image <image>', 'Docker image (required for docker type)')
-    .option('--command <cmd>', 'Command to run (required for docker type; JSON array or string)')
+    .option('--command <cmd>', 'Command to run (required for docker/host type; JSON array or string)')
+    .option('--cwd <dir>', 'Working directory for host jobs (relative paths resolve against projectDir)')
+    .option('--shell', 'Run a host job command through the shell (enables pipes/globs)')
     .option('--repo <url>', 'Git repo URL (required for pipeline type)')
     .option('--pipeline <name>', 'Pipeline name (required for pipeline type)')
     .option('--branch <branch>', 'Git branch (default: main)')
@@ -39,6 +49,8 @@ export function register(program: Command): void {
       type: string;
       image?: string;
       command?: string;
+      cwd?: string;
+      shell?: boolean;
       repo?: string;
       pipeline?: string;
       branch?: string;
@@ -143,6 +155,32 @@ export function register(program: Command): void {
             ...(Object.keys(env).length > 0 ? { env } : {}),
             ...(resources ? { resources } : {}),
           };
+        } else if (opts.type === 'host') {
+          if (!opts.command) {
+            error('--command is required for host jobs');
+            process.exit(1);
+          }
+
+          let command: string | string[];
+          try {
+            command = parseCommand(opts.command);
+          } catch {
+            error('Invalid JSON array for --command');
+            process.exit(1);
+          }
+
+          jobOptions = {
+            id,
+            name: opts.name,
+            type: 'host',
+            command,
+            schedule,
+            enabled: !opts.disabled,
+            ...(opts.cwd ? { cwd: opts.cwd } : {}),
+            ...(opts.shell ? { shell: true } : {}),
+            ...(Object.keys(env).length > 0 ? { env } : {}),
+            ...(resources ? { resources } : {}),
+          };
         } else {
           if (!opts.image) {
             error('--image is required for docker jobs');
@@ -155,15 +193,11 @@ export function register(program: Command): void {
 
           // Parse command: JSON array or single string
           let command: string | string[];
-          if (opts.command.startsWith('[')) {
-            try {
-              command = JSON.parse(opts.command);
-            } catch {
-              error('Invalid JSON array for --command');
-              process.exit(1);
-            }
-          } else {
-            command = opts.command;
+          try {
+            command = parseCommand(opts.command);
+          } catch {
+            error('Invalid JSON array for --command');
+            process.exit(1);
           }
 
           jobOptions = {

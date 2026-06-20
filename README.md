@@ -157,6 +157,7 @@ Shows full configuration for a single job:
 - Job metadata (name, ID, type, enabled status)
 - Docker jobs: image, command, timeout, volumes
 - Pipeline jobs: pipeline name, repo, branch, auth mode
+- Host jobs: command, working directory, timeout (edited via CLI/`jobs.json`, not the form)
 - Schedule description and next run time
 - Environment variable count
 - Last 5 runs with exit codes
@@ -241,7 +242,7 @@ Auto-refreshes every second when follow mode is enabled. Can switch between mult
 
 ## Job Configuration
 
-Jobs are stored in `jobs.json`. There are two job types: **Docker** and **Agent Pipeline**.
+Jobs are stored in `jobs.json`. There are three job types: **Docker**, **Agent Pipeline**, and **Host**.
 
 ### Docker Jobs
 
@@ -311,6 +312,65 @@ Run a Claude Code agent pipeline from a git repository.
 | `auth` | `"host-login"` or `"api-key"` | no | Auth mode (defaults to config-level setting) |
 | `schedule` | object | yes | Schedule configuration |
 | `enabled` | boolean | no | Whether the job is active (default: true) |
+
+### Host Jobs
+
+Run a command **directly on the host machine** under the scheduler's user — no
+container, no image, no container runtime. Use this for tasks that need
+host-only resources (a USB/serial device, a host service socket, a
+host-installed CLI), lightweight maintenance scripts, or deployments that don't
+run Docker at all. When the only jobs due on a tick are host jobs, the container
+runtime is never started.
+
+```json
+{
+  "type": "host",
+  "id": "nightly-backup",
+  "name": "Nightly Backup",
+  "command": ["/usr/local/bin/backup.sh", "--incremental"],
+  "cwd": "/Users/me/projects/thing",
+  "env": { "TARGET": "/Volumes/Backup" },
+  "schedule": { "type": "cron", "cron": "0 2 * * *" },
+  "resources": { "timeout": 600 },
+  "enabled": true
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `"host"` | yes | Job type discriminator |
+| `id` | string | yes | Unique identifier |
+| `name` | string | yes | Human-readable name |
+| `command` | string or string[] | yes | Command to execute. An array is exec'd argv-style (no shell); a string runs through the shell |
+| `cwd` | string | no | Working directory; relative paths resolve against `projectDir` (default: `projectDir`) |
+| `shell` | boolean | no | Run an array `command` through the shell too (enables pipes/globs) |
+| `env` | object | no | Environment variables (merged over the runner's environment) |
+| `schedule` | object | yes | Schedule configuration |
+| `resources` | object | no | Resource limits — only `timeout` applies to host jobs (no memory/cpu caps) |
+| `timeout` | number | no | Timeout in seconds (legacy, prefer `resources.timeout`) |
+| `enabled` | boolean | no | Whether the job is active (default: true) |
+
+Create one from the CLI:
+
+```bash
+agent-oven add nightly-backup --name "Nightly Backup" --type host \
+  --command '["/usr/local/bin/backup.sh","--incremental"]' \
+  --cwd /Users/me/projects/thing --schedule "0 2 * * *"
+```
+
+> **⚠️ Security — host jobs run with no isolation.** A host job executes
+> arbitrary commands as the scheduler's user, with that user's full filesystem
+> and credential access. There are no cgroup/CPU/memory limits (those are
+> container features), and the runner never uses `sudo`. Anyone who can edit
+> `jobs.json` can run code as this user — treat it as trusted input.
+>
+> **PATH:** the daemon runs with a minimal environment. The runner prepends
+> common bin directories (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`,
+> `/bin`, `/usr/sbin`, `/sbin`) to `PATH`, but prefer **absolute command paths**
+> to avoid "command not found".
+>
+> The TUI job form is Docker-only; host jobs are created/edited via the CLI or
+> `jobs.json`.
 
 ### Schedule Types
 

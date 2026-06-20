@@ -10,9 +10,11 @@
 import { execa } from 'execa';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { Config } from './types.js';
+import type { Config, Job } from './types.js';
+import { isHostJob } from './types.js';
 import { listJobs, updateLastRun, removeJob } from './jobs.js';
 import { runJob } from './docker.js';
+import { isHostJobRunning } from './host-lock.js';
 import { shouldRunNow } from './scheduler.js';
 import { getLogsDir, getSchedulerLogPath } from './config.js';
 import { platform } from './platform.js';
@@ -133,13 +135,18 @@ async function pruneDockerResources(config: Config): Promise<void> {
 }
 
 /**
- * Check if a job's container is already running.
+ * Check if a job is already running. Container jobs are checked via
+ * `docker inspect`; host jobs via their PID lockfile.
  */
-async function isJobRunning(jobId: string): Promise<boolean> {
+async function isJobRunning(config: Config, job: Job): Promise<boolean> {
+  if (isHostJob(job)) {
+    return isHostJobRunning(config, job.id);
+  }
+
   try {
     const { stdout } = await execa(
       'docker',
-      ['inspect', '--format', '{{.State.Running}}', `oven-${jobId}`],
+      ['inspect', '--format', '{{.State.Running}}', `oven-${job.id}`],
       { reject: false },
     );
     return stdout.trim() === 'true';
@@ -200,27 +207,42 @@ export async function runSchedulerTick(config: Config): Promise<number> {
     return 0;
   }
 
-  // --- Ensure container runtime ---
-  try {
-    await ensureRuntime(config);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`ERROR: Failed to start container runtime: ${msg}`);
-    return 1;
+  // --- Determine which jobs are due this tick ---
+  const tickTime = new Date();
+  const dueJobs = jobs.filter(
+    (job) =>
+      job.enabled !== false &&
+      shouldRunNow(job.schedule, job.last_run, tickTime, job.id),
+  );
+
+  if (dueJobs.length === 0) {
+    log('No jobs due');
+    log('Scheduler run completed');
+    return 0;
   }
 
-  // --- Process each job ---
-  const tickTime = new Date();
-  for (const job of jobs) {
-    // Skip disabled jobs
-    if (job.enabled === false) continue;
+  // --- Ensure container runtime, but only if a due job actually needs it ---
+  // A host-only tick must not start (or require) Docker/Colima.
+  if (dueJobs.some((job) => !isHostJob(job))) {
+    try {
+      await ensureRuntime(config);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`ERROR: Failed to start container runtime: ${msg}`);
+      return 1;
+    }
+  } else {
+    log('Only host jobs due — skipping container runtime startup');
+  }
 
-    // Check schedule
-    if (!shouldRunNow(job.schedule, job.last_run, tickTime, job.id)) continue;
-
-    // Skip if container is already running
-    if (await isJobRunning(job.id)) {
-      log(`Skipping job ${job.id}: container oven-${job.id} is still running`);
+  // --- Process each due job ---
+  for (const job of dueJobs) {
+    // Skip if this job is already running
+    if (await isJobRunning(config, job)) {
+      const reason = isHostJob(job)
+        ? 'previous run still active'
+        : `container oven-${job.id} is still running`;
+      log(`Skipping job ${job.id}: ${reason}`);
       continue;
     }
 

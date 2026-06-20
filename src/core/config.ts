@@ -175,6 +175,13 @@ export function getSchedulerLogPath(config: Config): string {
 }
 
 /**
+ * Get the directory holding per-job runtime state (e.g. host job PID lockfiles).
+ */
+export function getRunDir(config: Config): string {
+  return path.join(getLogsDir(config), 'run');
+}
+
+/**
  * Update specific config values
  */
 export function updateConfig(updates: Partial<Config>): Config {

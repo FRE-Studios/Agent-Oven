@@ -14,8 +14,8 @@ import {
   updateLastRun,
   getJobStats,
 } from '../jobs.js';
-import type { Job, DockerJob, PipelineJob, AddJobOptions } from '../types.js';
-import { makeConfig, makeDockerJob, makePipelineJob } from './fixtures.js';
+import type { Job, DockerJob, PipelineJob, HostJob, AddJobOptions } from '../types.js';
+import { makeConfig, makeDockerJob, makePipelineJob, makeHostJob } from './fixtures.js';
 
 // ─── validateJob ────────────────────────────────────────────
 
@@ -38,6 +38,14 @@ describe('validateJob', () => {
     schedule: { type: 'cron', cron: '0 9 * * *' },
   };
 
+  const validHostJob: HostJob = {
+    type: 'host',
+    id: 'my-host',
+    name: 'My Host Job',
+    command: ['echo', 'hello'],
+    schedule: { type: 'cron', cron: '0 2 * * *' },
+  };
+
   // Valid jobs return no errors
   it('returns empty array for valid docker job', () => {
     expect(validateJob(validDockerJob)).toEqual([]);
@@ -45,6 +53,29 @@ describe('validateJob', () => {
 
   it('returns empty array for valid pipeline job', () => {
     expect(validateJob(validPipelineJob)).toEqual([]);
+  });
+
+  it('returns empty array for valid host job', () => {
+    expect(validateJob(validHostJob)).toEqual([]);
+  });
+
+  // Host-specific: missing command
+  it('reports missing host command', () => {
+    const { command, ...noCommand } = validHostJob;
+    const errors = validateJob(noCommand);
+    expect(errors).toContain('Command is required for host jobs');
+  });
+
+  // Host-specific: image is NOT required (unlike docker)
+  it('does not require an image for host jobs', () => {
+    const errors = validateJob(validHostJob);
+    expect(errors).not.toContain('Docker image is required');
+  });
+
+  // Host-specific: a string command is valid
+  it('accepts a string command for host jobs', () => {
+    const errors = validateJob({ ...validHostJob, command: 'echo hello | tee out.txt' });
+    expect(errors).toEqual([]);
   });
 
   // Missing ID
@@ -283,6 +314,14 @@ describe('listJobs', () => {
     expect(jobs[0]!.type).toBe('docker');
   });
 
+  it('preserves host type on read (no legacy fallback)', () => {
+    const hostJob = makeHostJob({ id: 'host-1' });
+    mockJobsFile([hostJob]);
+    const jobs = listJobs(config);
+    expect(jobs[0]!.type).toBe('host');
+    expect(jobs[0]).toEqual(hostJob);
+  });
+
   it('returns [] when jobs key is missing', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({ notJobs: [] }));
@@ -327,6 +366,28 @@ describe('addJob', () => {
     const result = addJob(config, makePipelineJob({ id: 'new-pipeline' }) as AddJobOptions);
     expect(result.id).toBe('new-pipeline');
     expect(vi.mocked(fs.writeFileSync)).toHaveBeenCalledOnce();
+  });
+
+  it('adds valid host job and round-trips through write', () => {
+    mockJobsFile([]);
+    const result = addJob(
+      config,
+      makeHostJob({ id: 'new-host', cwd: '/tmp/work', shell: true }) as AddJobOptions,
+    );
+    expect(result.id).toBe('new-host');
+    expect(result.type).toBe('host');
+    expect(result.last_run).toBeNull();
+    const written = JSON.parse(vi.mocked(fs.writeFileSync).mock.calls[0]![1] as string);
+    expect(written.jobs[0].type).toBe('host');
+    expect(written.jobs[0].cwd).toBe('/tmp/work');
+    expect(written.jobs[0].shell).toBe(true);
+  });
+
+  it('throws when host job is missing command', () => {
+    mockJobsFile([]);
+    const { command, ...noCommand } = makeHostJob({ id: 'bad-host' });
+    expect(() => addJob(config, noCommand as AddJobOptions)).toThrow('Host jobs require: command');
+    expect(vi.mocked(fs.writeFileSync)).not.toHaveBeenCalled();
   });
 
   it('throws "already exists" for duplicate ID', () => {

@@ -107,8 +107,32 @@ export interface PipelineJob extends BaseJob {
   auth?: AuthMode;
 }
 
+/**
+ * A host job — runs a command directly on the host machine under the
+ * scheduler's user, with no container or container runtime.
+ *
+ * Host jobs run arbitrary commands with NO isolation. See README/CLAUDE.md.
+ */
+export interface HostJob extends BaseJob {
+  type: 'host';
+  /** Command to execute (string or array of strings) */
+  command: string | string[];
+  /**
+   * Working directory. Relative paths resolve against config.projectDir.
+   * Defaults to config.projectDir.
+   */
+  cwd?: string;
+  /**
+   * Run through the user's shell (enables pipes/globs). Defaults to false,
+   * which exec's the command argv-style. A string `command` is run via shell.
+   */
+  shell?: boolean;
+  /** Timeout in seconds (legacy, prefer resources.timeout) */
+  timeout?: number;
+}
+
 /** Discriminated union of all job types */
-export type Job = DockerJob | PipelineJob;
+export type Job = DockerJob | PipelineJob | HostJob;
 
 /** Type guard for Docker jobs */
 export function isDockerJob(job: Job): job is DockerJob {
@@ -118,6 +142,11 @@ export function isDockerJob(job: Job): job is DockerJob {
 /** Type guard for Pipeline jobs */
 export function isPipelineJob(job: Job): job is PipelineJob {
   return job.type === 'agent-pipeline';
+}
+
+/** Type guard for Host jobs */
+export function isHostJob(job: Job): job is HostJob {
+  return job.type === 'host';
 }
 
 /** The jobs.json file structure */
@@ -219,7 +248,13 @@ export interface SystemStatus {
 }
 
 /** Options for adding a new job */
-export type AddJobOptions = Omit<DockerJob, 'last_run'> | Omit<PipelineJob, 'last_run'>;
+export type AddJobOptions =
+  | Omit<DockerJob, 'last_run'>
+  | Omit<PipelineJob, 'last_run'>
+  | Omit<HostJob, 'last_run'>;
 
 /** Options for updating an existing job */
-export type UpdateJobOptions = Partial<Omit<DockerJob, 'id' | 'type'>> | Partial<Omit<PipelineJob, 'id' | 'type'>>;
+export type UpdateJobOptions =
+  | Partial<Omit<DockerJob, 'id' | 'type'>>
+  | Partial<Omit<PipelineJob, 'id' | 'type'>>
+  | Partial<Omit<HostJob, 'id' | 'type'>>;

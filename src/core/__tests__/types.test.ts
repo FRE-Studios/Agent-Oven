@@ -1,5 +1,5 @@
-import { isDockerJob, isPipelineJob } from '../types.js';
-import type { DockerJob, PipelineJob } from '../types.js';
+import { isDockerJob, isPipelineJob, isHostJob } from '../types.js';
+import type { DockerJob, PipelineJob, HostJob } from '../types.js';
 
 const dockerJob: DockerJob = {
   type: 'docker',
@@ -19,6 +19,14 @@ const pipelineJob: PipelineJob = {
   schedule: { type: 'cron', cron: '0 9 * * *' },
 };
 
+const hostJob: HostJob = {
+  type: 'host',
+  id: 'test-host',
+  name: 'Test Host Job',
+  command: ['echo', 'hello'],
+  schedule: { type: 'cron', cron: '0 * * * *' },
+};
+
 describe('isDockerJob', () => {
   it('returns true for docker job', () => {
     expect(isDockerJob(dockerJob)).toBe(true);
@@ -26,6 +34,10 @@ describe('isDockerJob', () => {
 
   it('returns false for pipeline job', () => {
     expect(isDockerJob(pipelineJob)).toBe(false);
+  });
+
+  it('returns false for host job', () => {
+    expect(isDockerJob(hostJob)).toBe(false);
   });
 });
 
@@ -38,8 +50,30 @@ describe('isPipelineJob', () => {
     expect(isPipelineJob(dockerJob)).toBe(false);
   });
 
-  it('isDockerJob and isPipelineJob are mutually exclusive', () => {
-    expect(isDockerJob(dockerJob)).not.toBe(isPipelineJob(dockerJob));
-    expect(isDockerJob(pipelineJob)).not.toBe(isPipelineJob(pipelineJob));
+  it('returns false for host job', () => {
+    expect(isPipelineJob(hostJob)).toBe(false);
+  });
+});
+
+describe('isHostJob', () => {
+  it('returns true for host job', () => {
+    expect(isHostJob(hostJob)).toBe(true);
+  });
+
+  it('returns false for docker job', () => {
+    expect(isHostJob(dockerJob)).toBe(false);
+  });
+
+  it('returns false for pipeline job', () => {
+    expect(isHostJob(pipelineJob)).toBe(false);
+  });
+});
+
+describe('job type guards', () => {
+  it('exactly one guard matches each job type', () => {
+    for (const job of [dockerJob, pipelineJob, hostJob]) {
+      const matches = [isDockerJob(job), isPipelineJob(job), isHostJob(job)].filter(Boolean);
+      expect(matches).toHaveLength(1);
+    }
   });
 });

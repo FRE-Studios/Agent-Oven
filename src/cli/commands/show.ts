@@ -6,7 +6,7 @@ import type { Command } from 'commander';
 import { requireConfig, requireJob, handleError } from '../utils/errors.js';
 import { describeSchedule, getNextRun, formatRelativeTime } from '../../core/scheduler.js';
 import { getRecentExecutions } from '../../core/docker.js';
-import { isDockerJob, isPipelineJob } from '../../core/types.js';
+import { isDockerJob, isPipelineJob, isHostJob } from '../../core/types.js';
 
 export function register(program: Command): void {
   program
@@ -43,6 +43,15 @@ export function register(program: Command): void {
           console.log(`  Pipeline:   ${job.pipeline}`);
           if (job.auth) {
             console.log(`  Auth:       ${job.auth}`);
+          }
+        }
+
+        if (isHostJob(job)) {
+          const cmd = Array.isArray(job.command) ? job.command.join(' ') : job.command;
+          console.log(`  Command:    ${cmd}`);
+          console.log(`  Cwd:        ${job.cwd ?? '(projectDir)'}`);
+          if (job.shell) {
+            console.log(`  Shell:      yes`);
           }
         }
 

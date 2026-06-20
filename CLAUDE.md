@@ -110,6 +110,8 @@ Platform detection is automatic via `getPlatformAdapter()` in `src/core/platform
 
 ## Job JSON Structure
 
+Three job types, discriminated by `type`: `docker` (default), `agent-pipeline`, and `host`.
+
 ```json
 {
   "id": "my-job",
@@ -123,6 +125,46 @@ Platform detection is automatic via `getPlatformAdapter()` in `src/core/platform
   "enabled": true
 }
 ```
+
+### Host Jobs (`type: "host"`)
+
+Run a command **directly on the host machine** under the scheduler's user — no
+container, no image, no container runtime. Useful for tasks that need host-only
+resources (devices, local services, host-installed CLIs) or for deployments
+without Docker at all. A host-only tick never starts the container runtime.
+
+```json
+{
+  "id": "nightly-backup",
+  "name": "Nightly Backup",
+  "type": "host",
+  "command": ["/usr/local/bin/backup.sh", "--incremental"],
+  "cwd": "/Users/me/projects/thing",
+  "env": { "TARGET": "/Volumes/Backup" },
+  "schedule": { "type": "cron", "cron": "0 2 * * *" },
+  "resources": { "timeout": 600 },
+  "enabled": true
+}
+```
+
+- `command`: `string | string[]`. An **array** is exec'd argv-style (no shell).
+  A **string**, or `"shell": true`, runs through the shell (pipes/globs).
+- `cwd`: working directory; relative paths resolve against `config.projectDir`
+  (default: `projectDir`).
+- `resources.timeout` / legacy `timeout`: seconds before the process is killed
+  (foreground runs only — detached runs are not timed, same as Docker).
+
+**⚠️ Security:** host jobs run arbitrary commands with **no isolation**, as the
+scheduler's user, with that user's full filesystem and credential access. The
+runner never uses `sudo`. Whoever can edit `jobs.json` can run code as this user.
+
+**PATH note:** the daemon runs with a minimal environment, so bare command names
+(`node`, `python3`, `git`) may not resolve. The runner prepends common bin dirs
+(`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`,
+`/sbin`) to `PATH`, but prefer **absolute command paths** to be safe.
+
+> The TUI job form is Docker-only; create and edit host jobs via the CLI
+> (`agent-oven add --type host`) or by editing `jobs.json` directly.
 
 ## Pre-built Docker Images
 

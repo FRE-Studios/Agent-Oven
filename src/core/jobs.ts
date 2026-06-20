@@ -12,6 +12,7 @@ import type {
   AddJobOptions,
   UpdateJobOptions,
 } from './types.js';
+import type { HostJob } from './types.js';
 import { isDockerJob, isPipelineJob } from './types.js';
 import { getJobsFilePath } from './config.js';
 import { validateRandomWindow } from './scheduler.js';
@@ -21,7 +22,7 @@ import { validateRandomWindow } from './scheduler.js';
  * Jobs with `image` and `command` but no `type` are treated as Docker jobs.
  */
 function normalizeJob(raw: Record<string, unknown>): Job {
-  if (raw.type === 'docker' || raw.type === 'agent-pipeline') {
+  if (raw.type === 'docker' || raw.type === 'agent-pipeline' || raw.type === 'host') {
     return raw as unknown as Job;
   }
 
@@ -118,6 +119,10 @@ export function addJob(config: Config, options: AddJobOptions): Job {
   } else if (options.type === 'agent-pipeline') {
     if (!options.source || !options.pipeline) {
       throw new Error('Pipeline jobs require: source, pipeline');
+    }
+  } else if (options.type === 'host') {
+    if (!options.command) {
+      throw new Error('Host jobs require: command');
     }
   }
 
@@ -261,8 +266,13 @@ export function validateJob(job: Partial<Job>): string[] {
     if (!pj.pipeline) {
       errors.push('Pipeline name is required');
     }
+  } else if (jobType === 'host') {
+    const hj = job as Partial<HostJob>;
+    if (!hj.command) {
+      errors.push('Command is required for host jobs');
+    }
   } else {
-    // Docker job (default)
+    // Docker job (default — also covers legacy untyped jobs)
     const dj = job as Partial<DockerJob>;
     if (!dj.image) {
       errors.push('Docker image is required');

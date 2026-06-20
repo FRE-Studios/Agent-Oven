@@ -4,7 +4,6 @@
  */
 
 import { execa, type ExecaError } from 'execa';
-import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type {
@@ -17,7 +16,7 @@ import type {
   JobRunResult,
   SystemStatus,
 } from './types.js';
-import { isPipelineJob } from './types.js';
+import { isPipelineJob, isHostJob } from './types.js';
 import {
   getLogsDir,
   getJobLogsDir,
@@ -31,6 +30,12 @@ import {
   DEFAULT_AUTH_CONFIG,
 } from './auth.js';
 import { platform } from './platform.js';
+import {
+  prepareLogFile,
+  shellEscape,
+  spawnDetachedRun,
+} from './run-utils.js';
+import { runHostJob } from './host-runner.js';
 
 /**
  * Get list of running job containers
@@ -144,28 +149,6 @@ export async function getSystemStatus(config: Config): Promise<SystemStatus> {
 }
 
 /**
- * Prepare log file and directory for a job run.
- */
-function prepareLogFile(config: Config, jobId: string): string {
-  const jobLogDir = getJobLogsDir(config, jobId);
-  if (!fs.existsSync(jobLogDir)) {
-    fs.mkdirSync(jobLogDir, { recursive: true });
-  }
-
-  const now = new Date();
-  const timestamp = [
-    String(now.getFullYear()),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-    '-',
-    String(now.getHours()).padStart(2, '0'),
-    String(now.getMinutes()).padStart(2, '0'),
-    String(now.getSeconds()).padStart(2, '0'),
-  ].join('');
-  return path.join(jobLogDir, `${timestamp}.log`);
-}
-
-/**
  * Run a job immediately - routes to the appropriate handler based on job type.
  */
 export async function runJob(
@@ -176,141 +159,16 @@ export async function runJob(
   if (isPipelineJob(job)) {
     return runPipelineJob(config, job, options);
   }
+  if (isHostJob(job)) {
+    return runHostJob(config, job, options);
+  }
   // Default: Docker job (also handles any legacy jobs)
   return runDockerJob(config, job as DockerJob, options);
 }
 
-/**
- * Escape a string for safe use as a POSIX shell argument.
- */
-function shellEscape(arg: string): string {
-  return "'" + arg.replace(/'/g, "'\\''") + "'";
-}
-
-/** Give detached jobs a brief grace period to surface immediate startup failures. */
-const DETACHED_STARTUP_GRACE_MS = 750;
-
-function closeLogFd(fd: number): void {
-  try {
-    fs.closeSync(fd);
-  } catch {
-    // Ignore close errors
-  }
-}
-
-function readLogTail(logFile: string, maxChars = 4096): string {
-  try {
-    const content = fs.readFileSync(logFile, 'utf-8');
-    if (content.length <= maxChars) {
-      return content.trim();
-    }
-    return content.slice(-maxChars).trim();
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Spawn a detached Docker process that streams output to a log file.
- * The parent process can exit immediately; the Docker container
- * continues running with stdout/stderr flowing to the log.
- * When the container exits, finish markers and exit code are appended.
- */
-async function spawnDetachedDockerRun(
-  args: string[],
-  logFile: string,
-): Promise<JobRunResult> {
-  const logFd = fs.openSync(logFile, 'a');
-
-  const dockerCmd = ['docker', ...args].map(shellEscape).join(' ');
-
-  // Run docker in foreground inside a detached shell.
-  // After docker exits, append finish markers with the exit code.
-  const script = [
-    dockerCmd,
-    'EC=$?',
-    `printf '\\n=== Finished: %s ===\\n=== Exit Code: %d ===\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$EC"`,
-  ].join('\n');
-
-  let child: ReturnType<typeof spawn>;
-  try {
-    child = spawn('sh', ['-c', script], {
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-    });
-  } catch (err) {
-    closeLogFd(logFd);
-    const msg = err instanceof Error ? err.message : String(err);
-    return {
-      success: false,
-      exitCode: 1,
-      logFile,
-      output: `Failed to start detached job: ${msg}`,
-    };
-  }
-
-  return await new Promise<JobRunResult>((resolve) => {
-    let settled = false;
-    let startupTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const settle = (result: JobRunResult): void => {
-      if (settled) return;
-      settled = true;
-      if (startupTimer) {
-        clearTimeout(startupTimer);
-        startupTimer = null;
-      }
-      child.removeListener('error', onError);
-      child.removeListener('exit', onExit);
-      closeLogFd(logFd);
-      resolve(result);
-    };
-
-    const onError = (err: Error): void => {
-      settle({
-        success: false,
-        exitCode: 1,
-        logFile,
-        output: `Failed to start detached job: ${err.message}`,
-      });
-    };
-
-    const onExit = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
-      const code = exitCode ?? 1;
-      if (code === 0 && !signal) {
-        settle({
-          success: true,
-          exitCode: 0,
-          logFile,
-          output: 'Job completed before detaching',
-        });
-        return;
-      }
-
-      const logTail = readLogTail(logFile);
-      settle({
-        success: false,
-        exitCode: code,
-        logFile,
-        output: logTail || `Detached job exited before startup completed${signal ? ` (signal: ${signal})` : ''}`,
-      });
-    };
-
-    child.once('error', onError);
-    child.once('exit', onExit);
-
-    startupTimer = setTimeout(() => {
-      child.unref();
-      settle({
-        success: true,
-        exitCode: 0,
-        logFile,
-        output: 'Job started in background',
-      });
-    }, DETACHED_STARTUP_GRACE_MS);
-
-    startupTimer.unref?.();
-  });
+/** Build a shell-ready command line for a detached docker run. */
+function dockerCommandLine(args: string[]): string {
+  return ['docker', ...args].map(shellEscape).join(' ');
 }
 
 /**
@@ -370,7 +228,7 @@ async function runDockerJob(
   fs.writeFileSync(logFile, logHeader);
 
   if (options.detach) {
-    return spawnDetachedDockerRun(args, logFile);
+    return spawnDetachedRun(dockerCommandLine(args), logFile);
   }
 
   // Run in foreground with timeout
@@ -522,7 +380,7 @@ async function runPipelineJob(
   fs.writeFileSync(logFile, logHeader);
 
   if (options.detach) {
-    return spawnDetachedDockerRun(args, logFile);
+    return spawnDetachedRun(dockerCommandLine(args), logFile);
   }
 
   // Run in foreground with timeout

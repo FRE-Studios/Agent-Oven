@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import type { Config, Job, JobLogEntry } from '../../core/types.js';
-import { isDockerJob, isPipelineJob } from '../../core/types.js';
+import { isDockerJob, isPipelineJob, isHostJob } from '../../core/types.js';
 import { getJob, toggleJob, removeJob } from '../../core/jobs.js';
 import { runJob, getRecentExecutions, getJobLogFiles } from '../../core/docker.js';
 import { describeSchedule, getNextRun, formatRelativeTime } from '../../core/scheduler.js';
@@ -72,7 +72,13 @@ export function JobDetail({
         handleRunJob();
         break;
       case 'e':
-        onEdit(job);
+        // The job form only supports Docker jobs; editing a host job through
+        // it would corrupt the record. Host jobs are edited via jobs.json.
+        if (isHostJob(job)) {
+          onMessage('Host jobs are edited via jobs.json (TUI form is Docker-only)', 'error');
+        } else {
+          onEdit(job);
+        }
         break;
       case ' ':
         handleToggle();
@@ -197,6 +203,16 @@ export function JobDetail({
             )}
           </>
         )}
+        {isHostJob(job) && (
+          <>
+            <DetailRow
+              label="Command"
+              value={Array.isArray(job.command) ? job.command.join(' ') : job.command}
+            />
+            <DetailRow label="Cwd" value={job.cwd ?? '(projectDir)'} />
+            {job.shell && <DetailRow label="Shell" value="yes" />}
+          </>
+        )}
         <DetailRow label="Schedule" value={scheduleDesc} />
         {job.schedule.type === 'cron' && (
           <DetailRow label="Cron" value={job.schedule.cron} />
@@ -210,7 +226,7 @@ export function JobDetail({
         {nextRun && (
           <DetailRow label="Next run" value={formatRelativeTime(nextRun)} />
         )}
-        {isDockerJob(job) && job.timeout && (
+        {(isDockerJob(job) || isHostJob(job)) && job.timeout && (
           <DetailRow label="Timeout" value={`${job.timeout} seconds`} />
         )}
         {isDockerJob(job) && job.volumes && job.volumes.length > 0 && (

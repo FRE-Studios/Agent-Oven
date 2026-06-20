@@ -21,10 +21,15 @@ vi.mock('node:fs', () => ({
   statSync: vi.fn(() => ({ isDirectory: () => true })),
 }));
 
+vi.mock('../host-runner.js', () => ({
+  runHostJob: vi.fn(async () => ({ success: true, exitCode: 0, logFile: '/tmp/host.log' })),
+}));
+
 import * as fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { runJob } from '../docker.js';
-import { makeConfig, makeDockerJob, makePipelineJob } from './fixtures.js';
+import { runHostJob } from '../host-runner.js';
+import { makeConfig, makeDockerJob, makePipelineJob, makeHostJob } from './fixtures.js';
 
 class FakeChild extends EventEmitter {
   unref = vi.fn();
@@ -97,6 +102,18 @@ describe('runJob (detached)', () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toBe('Job started in background');
     expect(child.unref).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes host jobs to the host runner', async () => {
+    const config = makeConfig();
+    const job = makeHostJob();
+
+    const result = await runJob(config, job);
+
+    expect(runHostJob).toHaveBeenCalledTimes(1);
+    expect(runHostJob).toHaveBeenCalledWith(config, job, {});
+    expect(result.success).toBe(true);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it('applies detached startup failure handling for pipeline jobs too', async () => {

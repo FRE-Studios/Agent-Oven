@@ -3,7 +3,7 @@
  * Factory functions return fresh copies so tests don't share state.
  */
 
-import type { Config, DockerJob, PipelineJob, AuthConfig } from '../types.js';
+import type { Config, DockerJob, PipelineJob, HostJob, AuthConfig } from '../types.js';
 
 export function makeConfig(overrides?: Partial<Config>): Config {
   return {
@@ -40,6 +40,17 @@ export function makePipelineJob(overrides?: Partial<PipelineJob>): PipelineJob {
     source: { repo: 'https://github.com/test/repo' },
     pipeline: 'main',
     schedule: { type: 'cron', cron: '0 9 * * *' },
+    ...overrides,
+  };
+}
+
+export function makeHostJob(overrides?: Partial<HostJob>): HostJob {
+  return {
+    type: 'host',
+    id: 'test-host',
+    name: 'Test Host Job',
+    command: ['echo', 'hello'],
+    schedule: { type: 'cron', cron: '0 * * * *' },
     ...overrides,
   };
 }
